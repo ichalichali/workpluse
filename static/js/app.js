@@ -552,6 +552,61 @@ async function showApplyModal() {
   const balMap = {};
   bals.forEach(b => balMap[b.leave_type_id] = b.remaining);
 
+  // ── Indonesia National Holidays 2025 & 2026 ──────────────────────────────────
+  const ID_HOLIDAYS = {
+    // 2025
+    '2025-01-01': 'New Year's Day',
+    '2025-01-27': 'Isra Mi'raj',
+    '2025-01-28': 'Chinese New Year',
+    '2025-01-29': 'Chinese New Year Holiday',
+    '2025-03-29': 'Nyepi (Saka New Year)',
+    '2025-03-31': 'Eid al-Fitr Eve',
+    '2025-04-01': 'Eid al-Fitr Day 1',
+    '2025-04-02': 'Eid al-Fitr Day 2',
+    '2025-04-03': 'Eid al-Fitr Holiday',
+    '2025-04-04': 'Eid al-Fitr Holiday',
+    '2025-04-07': 'Eid al-Fitr Holiday',
+    '2025-04-18': 'Good Friday',
+    '2025-05-01': 'Labour Day',
+    '2025-05-12': 'Vesak Day',
+    '2025-05-13': 'Vesak Day Holiday',
+    '2025-05-29': 'Ascension Day',
+    '2025-06-01': 'Pancasila Day',
+    '2025-06-06': 'Eid al-Adha Day',
+    '2025-06-09': 'Eid al-Adha Holiday',
+    '2025-06-27': 'Islamic New Year',
+    '2025-08-17': 'Independence Day',
+    '2025-09-05': 'Prophet's Birthday',
+    '2025-12-25': 'Christmas Day',
+    '2025-12-26': 'Christmas Holiday',
+    // 2026
+    '2026-01-01': 'New Year's Day',
+    '2026-01-16': 'Isra Mi'raj',
+    '2026-01-17': 'Chinese New Year Eve',
+    '2026-01-28': 'Chinese New Year',
+    '2026-03-03': 'Eid al-Fitr Eve',
+    '2026-03-04': 'Eid al-Fitr Day 1',
+    '2026-03-05': 'Eid al-Fitr Day 2',
+    '2026-03-06': 'Eid al-Fitr Holiday',
+    '2026-03-09': 'Eid al-Fitr Holiday',
+    '2026-03-10': 'Eid al-Fitr Holiday',
+    '2026-03-19': 'Nyepi (Saka New Year)',
+    '2026-04-03': 'Good Friday',
+    '2026-05-01': 'Labour Day',
+    '2026-05-14': 'Ascension Day',
+    '2026-05-24': 'Vesak Day',
+    '2026-05-13': 'Eid al-Adha Eve',
+    '2026-05-27': 'Eid al-Adha Day',
+    '2026-06-01': 'Pancasila Day',
+    '2026-06-17': 'Islamic New Year',
+    '2026-08-17': 'Independence Day',
+    '2026-08-26': 'Prophet's Birthday',
+    '2026-12-25': 'Christmas Day',
+    '2026-12-26': 'Christmas Holiday',
+    '2026-12-31': 'New Year's Eve Holiday',
+  };
+  const holidayDates = new Set(Object.keys(ID_HOLIDAYS));
+
   // Build set of already-applied dates (pending/approved) to mark as unavailable
   const takenDates = new Set();
   reqs.forEach(r => {
@@ -597,6 +652,7 @@ async function showApplyModal() {
       <div class="lc-legend">
         <span><span class="lc-dot lc-dot-sel"></span> Selected</span>
         <span><span class="lc-dot lc-dot-taken"></span> Already applied</span>
+        <span><span class="lc-dot lc-dot-holiday"></span> Public Holiday</span>
         <span><span class="lc-dot lc-dot-weekend"></span> Weekend</span>
       </div>
     </div>
@@ -633,20 +689,24 @@ async function showApplyModal() {
       const isPast    = dObj < today;
       const isTaken   = takenDates.has(dateStr);
       const isSel     = selectedDates.has(dateStr);
+      const isHoliday = holidayDates.has(dateStr);
       const isToday   = dateStr === today.toISOString().slice(0,10);
+      const holidayName = ID_HOLIDAYS[dateStr] || '';
       let cls = 'lc-day';
-      if (isWeekend) cls += ' lc-weekend';
+      if (isWeekend)        cls += ' lc-weekend';
+      else if (isHoliday)   cls += ' lc-holiday';
       else if (isPast || isTaken) cls += ' lc-disabled';
-      else if (isSel) cls += ' lc-sel';
-      else cls += ' lc-avail';
+      else if (isSel)       cls += ' lc-sel';
+      else                  cls += ' lc-avail';
       if (isToday) cls += ' lc-today';
-      const clickable = !isWeekend && !isPast && !isTaken;
-      html += `<div class="${cls}" ${clickable ? `onclick="lcToggle('${dateStr}')"` : ''}>${d}</div>`;
+      const clickable = !isWeekend && !isPast && !isTaken && !isHoliday;
+      const tooltip = holidayName ? `title="${holidayName}"` : '';
+      html += `<div class="${cls}" ${clickable ? `onclick="lcToggle('${dateStr}')"` : ''} ${tooltip}>${d}${isHoliday ? '<span class="lc-hflag">🇮🇩</span>' : ''}</div>`;
     }
     grid.innerHTML = html;
 
     // Update summary
-    const workDays = [...selectedDates].filter(ds => { const d=new Date(ds); return d.getDay()>0&&d.getDay()<6; }).length;
+    const workDays = [...selectedDates].filter(ds => { const d=new Date(ds); return d.getDay()>0&&d.getDay()<6 && !holidayDates.has(ds); }).length;
     const calc = document.getElementById('days-calc');
     if (calc) {
       calc.textContent = workDays > 0

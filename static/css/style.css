@@ -887,3 +887,20 @@ tr:hover td { background: var(--grey-50); }
 .modal-body .form-group textarea { padding: 9px 12px; font-size: 14px; }
 .modal-body .alert { padding: 9px 13px; font-size: 13px; margin: 0; }
 .modal-body textarea { resize: none; }
+
+/* ── Holiday styles ────────────────────────────────────────────────────────── */
+.lc-holiday {
+  background: #fff7ed;
+  color: #c2410c;
+  cursor: not-allowed;
+  position: relative;
+}
+.lc-holiday:hover { background: #ffedd5; }
+.lc-hflag {
+  position: absolute;
+  bottom: 1px;
+  right: 1px;
+  font-size: 7px;
+  line-height: 1;
+}
+.lc-dot-holiday { background: #fb923c; }
