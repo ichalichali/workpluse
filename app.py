@@ -586,6 +586,12 @@ def serve(path=''):
         return send_from_directory(app.static_folder,path)
     return send_from_directory(app.template_folder,'index.html')
 
-if __name__=='__main__':
+# Auto-initialize DB on startup (works with gunicorn too, not just __main__)
+try:
     init_db()
+    print("✅ Database ready")
+except Exception as e:
+    print(f"⚠️  DB init error: {e}")
+
+if __name__=='__main__':
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT',5000)))
