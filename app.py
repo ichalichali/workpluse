@@ -1,10 +1,19 @@
 from flask import Flask, request, jsonify, session, send_from_directory
 import os, json, math, smtplib, hashlib, secrets
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+def now_local():
+    """Current datetime in the configured timezone (default: Asia/Jakarta UTC+7)."""
+    tz = ZoneInfo(os.environ.get('TZ', 'Asia/Jakarta'))
+    return datetime.now(tz)
+
+def today_local():
+    return now_local().date()
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -147,7 +156,7 @@ def init_db():
 
         c.execute("SELECT id FROM users"); user_ids=[r['id'] for r in c.fetchall()]
         c.execute("SELECT id,max_days FROM leave_types"); lts=c.fetchall()
-        yr=date.today().year
+        yr=today_local().year
         for uid in user_ids:
             for lt in lts:
                 c.execute("INSERT INTO leave_balances (user_id,leave_type_id,year,total_days,used_days) VALUES (%s,%s,%s,%s,0) ON CONFLICT DO NOTHING",(uid,lt['id'],yr,lt['max_days']))
@@ -155,7 +164,7 @@ def init_db():
         import random
         for uid in [3,4,5]:
             for i in range(14,0,-1):
-                d=date.today()-timedelta(days=i)
+                d=today_local()-timedelta(days=i)
                 if d.weekday()>=5: continue
                 st=random.choice(['ontime','ontime','ontime','late','ontime'])
                 ph=9 if st=='ontime' else random.randint(9,11)
@@ -254,9 +263,9 @@ def login():
     if not user: return jsonify({'error':'Invalid credentials'}),401
     session['user_id']=user['id']; session['role']=user['role']
     conn=get_db(); c=conn.cursor()
-    c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s",(user['id'],date.today().isoformat()))
+    c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s",(user['id'],today_local().isoformat()))
     att=row(c); conn.close()
-    punch_status=att['status'] if att else ('not_punched' if date.today().weekday()<5 else None)
+    punch_status=att['status'] if att else ('not_punched' if today_local().weekday()<5 else None)
     return jsonify({'user':{'id':user['id'],'name':user['name'],'first_name':user['first_name'],'last_name':user['last_name'],
         'email':user['email'],'role':user['role'],'employee_id':user['employee_id'],
         'department':user['department'],'shift_start':user['shift_start'],'shift_end':user['shift_end'],
@@ -271,7 +280,7 @@ def forgot_password():
     email=request.json.get('email'); conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM users WHERE email=%s",(email,)); user=row(c)
     if not user: conn.close(); return jsonify({'ok':True})
-    token=secrets.token_urlsafe(32); expires=(datetime.now()+timedelta(hours=1)).isoformat()
+    token=secrets.token_urlsafe(32); expires=(now_local()+timedelta(hours=1)).isoformat()
     c.execute("UPDATE users SET reset_token=%s,reset_expires=%s WHERE id=%s",(token,expires,user['id']))
     conn.commit(); conn.close()
     return jsonify({'ok':True,'demo_token':token,'message':f'Reset link sent to {email}.'})
@@ -280,7 +289,7 @@ def forgot_password():
 def reset_password():
     data=request.json; conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM users WHERE reset_token=%s",(data.get('token'),)); user=row(c)
-    if not user or user['reset_expires']<datetime.now().isoformat():
+    if not user or user['reset_expires']<now_local().isoformat():
         conn.close(); return jsonify({'error':'Invalid or expired token'}),400
     c.execute("UPDATE users SET password=%s,reset_token=NULL,reset_expires=NULL WHERE id=%s",(hash_password(data['password']),user['id']))
     conn.commit(); conn.close(); return jsonify({'ok':True})
@@ -290,7 +299,7 @@ def reset_password():
 def punch_in():
     err=require_login()
     if err: return err
-    uid=session['user_id']; today=date.today().isoformat(); now=datetime.now().strftime('%H:%M:%S')
+    uid=session['user_id']; today=today_local().isoformat(); now=now_local().strftime('%H:%M:%S')
     data=request.json or {}; lat=data.get('lat'); lon=data.get('lon')
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM users WHERE id=%s",(uid,)); user=row(c)
@@ -311,7 +320,7 @@ def punch_in():
 def punch_out():
     err=require_login()
     if err: return err
-    uid=session['user_id']; today=date.today().isoformat(); now=datetime.now().strftime('%H:%M:%S')
+    uid=session['user_id']; today=today_local().isoformat(); now=now_local().strftime('%H:%M:%S')
     data=request.json or {}; lat=data.get('lat'); lon=data.get('lon')
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM users WHERE id=%s",(uid,)); user=row(c)
@@ -329,7 +338,7 @@ def punch_out():
 def my_attendance():
     err=require_login()
     if err: return err
-    month=request.args.get('month',date.today().strftime('%Y-%m')); conn=get_db(); c=conn.cursor()
+    month=request.args.get('month',today_local().strftime('%Y-%m')); conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM attendance WHERE user_id=%s AND date LIKE %s ORDER BY date DESC",(session['user_id'],f"{month}%"))
     data=rows(c); conn.close(); return jsonify([dict(r) for r in data])
 
@@ -338,7 +347,7 @@ def today_status():
     err=require_login()
     if err: return err
     conn=get_db(); c=conn.cursor()
-    c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s",(session['user_id'],date.today().isoformat()))
+    c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s",(session['user_id'],today_local().isoformat()))
     r=row(c); conn.close(); return jsonify(dict(r) if r else {})
 
 @app.route('/api/attendance/summary')
@@ -347,7 +356,7 @@ def attendance_summary():
     if err: return err
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT status,COUNT(*) as cnt FROM attendance WHERE user_id=%s AND date LIKE %s GROUP BY status",
-              (session['user_id'],f"{date.today().year}-{date.today().month:02d}%"))
+              (session['user_id'],f"{today_local().year}-{today_local().month:02d}%"))
     data=rows(c); conn.close()
     s={'ontime':0,'late':0,'absent':0,'leave':0}
     for r in data:
@@ -358,7 +367,7 @@ def attendance_summary():
 def team_attendance():
     err=require_login()
     if err: return err
-    uid=session['user_id']; role=session['role']; df=request.args.get('date',date.today().isoformat())
+    uid=session['user_id']; role=session['role']; df=request.args.get('date',today_local().isoformat())
     conn=get_db(); c=conn.cursor()
     if role=='hr_admin':
         c.execute("""SELECT u.name,u.employee_id,u.department,a.punch_in,a.punch_out,a.status,a.date,a.geo_in,a.geo_out
@@ -443,7 +452,7 @@ def leave_balance():
     conn=get_db(); c=conn.cursor()
     c.execute("""SELECT lb.*,lt.name as leave_name,lt.max_days,(lb.total_days-lb.used_days) as remaining
            FROM leave_balances lb JOIN leave_types lt ON lb.leave_type_id=lt.id
-           WHERE lb.user_id=%s AND lb.year=%s""",(session['user_id'],date.today().year))
+           WHERE lb.user_id=%s AND lb.year=%s""",(session['user_id'],today_local().year))
     data=rows(c); conn.close(); return jsonify([dict(r) for r in data])
 
 @app.route('/api/leave/apply',methods=['POST'])
@@ -509,7 +518,7 @@ def leave_action():
     c.execute("SELECT * FROM leave_requests WHERE id=%s",(data['request_id'],)); req=row(c)
     if not req: conn.close(); return jsonify({'error':'Not found'}),404
     c.execute("UPDATE leave_requests SET status=%s,approved_by=%s,approved_at=%s,remarks=%s WHERE id=%s",
-              (action+'d',uid,datetime.now().isoformat(),data.get('remarks',''),data['request_id']))
+              (action+'d',uid,now_local().isoformat(),data.get('remarks',''),data['request_id']))
     if action=='approve':
         c.execute("UPDATE leave_balances SET used_days=used_days+%s WHERE user_id=%s AND leave_type_id=%s AND year=%s",
                   (req['days'],req['user_id'],req['leave_type_id'],req['start_date'][:4]))
@@ -551,7 +560,7 @@ def add_user():
                    data.get('role','employee'),data.get('department',''),
                    data.get('branch_id') or None,data.get('manager_id') or None,
                    data.get('shift_start','09:00'),data.get('shift_end','18:00')))
-        uid=row(c)['id']; yr=date.today().year
+        uid=row(c)['id']; yr=today_local().year
         c.execute("SELECT id,max_days FROM leave_types"); lts=rows(c)
         for lt in lts:
             c.execute("INSERT INTO leave_balances (user_id,leave_type_id,year,total_days) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
@@ -579,6 +588,15 @@ def update_user():
     conn.close(); return jsonify({'ok':True})
 
 # ── Serve ─────────────────────────────────────────────────────────────────────
+@app.route('/setup-db-workpulse-2026')
+def setup_db():
+    """One-time setup endpoint — initializes all DB tables and seed data."""
+    try:
+        init_db()
+        return jsonify({'ok': True, 'message': 'Database initialized successfully! You can now log in.'})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 @app.route('/')
 @app.route('/<path:path>')
 def serve(path=''):
