@@ -1,1 +1,4 @@
-web: gunicorn app:app --bind 0.0.0.0:$PORT
+"""Run this once after deploying to initialize the database."""
+from app import init_db
+init_db()
+print("Database initialized successfully!")
