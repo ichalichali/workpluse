@@ -597,6 +597,19 @@ def setup_db():
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+@app.route('/clear-today-workpulse-2026', methods=['GET','POST'])
+def clear_today():
+    """Clear ALL attendance records for today — use after timezone fix."""
+    try:
+        conn = get_db(); c = conn.cursor()
+        today = today_local().isoformat()
+        c.execute("DELETE FROM attendance WHERE date = %s", (today,))
+        deleted = c.rowcount
+        conn.commit(); conn.close()
+        return jsonify({'ok': True, 'message': f'Cleared {deleted} attendance record(s) for {today}. Everyone can punch in fresh now.'})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 @app.route('/')
 @app.route('/<path:path>')
 def serve(path=''):
