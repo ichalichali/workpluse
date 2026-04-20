@@ -229,7 +229,7 @@ def notify_supervisor(req_id):
     dates_str=', '.join(json.loads(req['dates_json'])) if req['dates_json'] else f"{req['start_date']} → {req['end_date']}"
     base=get_setting('base_url','http://localhost:5000')
     html=f"""<div style="font-family:sans-serif;max-width:600px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
-      <div style="background:#0f1f3d;padding:24px 28px"><h2 style="color:white;margin:0">⏱ WorkPulse — Leave Request</h2></div>
+      <div style="background:#0f1f3d;padding:24px 28px"><h2 style="color:white;margin:0">⏱ OnTime — Leave Request</h2></div>
       <div style="padding:28px">
         <p>Hi <strong>{mgr['name']}</strong>,</p>
         <p><strong>{emp['name']}</strong> has submitted a leave request requiring your approval.</p>
@@ -241,9 +241,9 @@ def notify_supervisor(req_id):
           <tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600">Total Days</td><td style="padding:10px"><strong>{req['days']} working day(s)</strong></td></tr>
           <tr><td style="padding:10px;color:#64748b;font-weight:600">Reason</td><td style="padding:10px">{req['reason'] or '—'}</td></tr>
         </table>
-        <a href="{base}" style="display:inline-block;background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Open WorkPulse to Approve →</a>
+        <a href="{base}" style="display:inline-block;background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Open OnTime to Approve →</a>
       </div>
-      <div style="background:#f8fafc;padding:14px 28px;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0">Automated notification from WorkPulse.</div>
+      <div style="background:#f8fafc;padding:14px 28px;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0">Automated notification from OnTime.</div>
     </div>"""
     send_email(mgr['email'],f"Leave Request: {emp['name']} — {req['days']} day(s) [{lt['name']}]",html)
 
@@ -435,7 +435,7 @@ def save_settings():
 def test_email():
     err=require_login()
     if err: return err
-    ok,msg=send_email(request.json.get('to'),'WorkPulse — Test Email','<p>Your email configuration is working! 🎉</p>')
+    ok,msg=send_email(request.json.get('to'),'OnTime — Test Email','<p>Your email configuration is working! 🎉</p>')
     return jsonify({'ok':ok,'message':msg})
 
 # ── Leave ─────────────────────────────────────────────────────────────────────
@@ -674,7 +674,7 @@ def missing_checkout_report():
     if not mgr: return jsonify({'ok': True, 'note': 'No supervisor to notify'})
     base = get_setting('base_url', 'http://localhost:5000')
     html = f"""<div style="font-family:sans-serif;max-width:600px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
-      <div style="background:#0f1f3d;padding:24px 28px"><h2 style="color:white;margin:0">⚠️ WorkPulse — Missing Clock-Out</h2></div>
+      <div style="background:#0f1f3d;padding:24px 28px"><h2 style="color:white;margin:0">⚠️ OnTime — Missing Clock-Out</h2></div>
       <div style="padding:28px">
         <p>Hi <strong>{mgr['name']}</strong>,</p>
         <p><strong>{emp['name']}</strong> did not clock out today and the system could not determine their checkout time.</p>
@@ -685,10 +685,10 @@ def missing_checkout_report():
           <tr><td style="padding:10px;color:#64748b;font-weight:600">Clock In</td><td style="padding:10px">{att['punch_in']}</td></tr>
           <tr style="background:#fef2f2"><td style="padding:10px;color:#dc2626;font-weight:600">Clock Out</td><td style="padding:10px;color:#dc2626"><strong>MISSING</strong></td></tr>
         </table>
-        <p style="color:#64748b;font-size:14px">Please log in to WorkPulse to manually enter their clock-out time.</p>
-        <a href="{base}" style="display:inline-block;background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Open WorkPulse →</a>
+        <p style="color:#64748b;font-size:14px">Please log in to OnTime to manually enter their clock-out time.</p>
+        <a href="{base}" style="display:inline-block;background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Open OnTime →</a>
       </div>
-      <div style="background:#f8fafc;padding:14px 28px;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0">Automated notification from WorkPulse.</div>
+      <div style="background:#f8fafc;padding:14px 28px;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0">Automated notification from OnTime.</div>
     </div>"""
     ok, msg = send_email(mgr['email'], f"Missing Clock-Out: {emp['name']} — {today}", html)
     return jsonify({'ok': True, 'email_sent': ok, 'note': msg})

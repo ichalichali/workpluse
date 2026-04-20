@@ -1,0 +1,1894 @@
+// ── State ────────────────────────────────────────────────────────────────────
+const state = {
+  user: null,
+  page: 'login',
+  punchStatus: null,
+  pendingCount: 0,
+};
+
+// ── API helper ────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const res = await fetch(`/api${path}`, {
+    method,
+    credentials: 'include',
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+// ── Render Router ─────────────────────────────────────────────────────────────
+function render() {
+  const app = document.getElementById('app');
+  if (!state.user) {
+    if (state.page === 'forgot') return renderForgot();
+    if (state.page === 'reset')  return renderReset();
+    return renderLogin();
+  }
+  renderShell();
+}
+
+// ── Login Page ────────────────────────────────────────────────────────────────
+function renderLogin() {
+  document.getElementById('app').innerHTML = `
+  <div class="auth-wrap">
+    <div class="auth-hero">
+      <div class="hero-logo">
+        <div class="hero-logo-icon">⏱</div>
+        <div class="hero-logo-text">OnTime</div>
+      </div>
+      <h1 class="hero-title">Track time.<br>Manage leave.<br><span>Stay in sync.</span></h1>
+      <p class="hero-sub">A modern attendance & leave management system built for teams of every size.</p>
+      <div class="hero-pills">
+        <span class="hero-pill">✅ Real-time punch-in</span>
+        <span class="hero-pill">📅 Leave management</span>
+        <span class="hero-pill">📊 Team dashboard</span>
+        <span class="hero-pill">👥 3 role levels</span>
+      </div>
+    </div>
+    <div class="auth-panel">
+      <h2>Welcome back</h2>
+      <p class="sub">Sign in to your account to continue</p>
+      <div id="login-alert"></div>
+      <div class="form-group">
+        <label>Email address</label>
+        <input id="login-email" type="email" placeholder="you@company.com" value="alice@company.com"/>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input id="login-pw" type="password" placeholder="••••••••" value="emp123"/>
+      </div>
+      <div style="text-align:right;margin-bottom:20px;margin-top:-8px">
+        <button class="link-btn" onclick="state.page='forgot';render()">Forgot password?</button>
+      </div>
+      <button class="btn btn-primary btn-full" id="login-btn" onclick="doLogin()">Sign In</button>
+      <div style="margin-top:24px;padding:16px;background:#f8fafc;border-radius:10px;font-size:13px;color:#64748b">
+        <strong style="display:block;margin-bottom:8px;color:#334155">🔑 Demo accounts</strong>
+        <div style="display:grid;gap:4px">
+          <span>HR Admin: <code>hr@company.com</code> / <code>hr123</code></span>
+          <span>Manager: <code>manager@company.com</code> / <code>mgr123</code></span>
+          <span>Employee: <code>alice@company.com</code> / <code>emp123</code></span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('login-pw').addEventListener('keydown', e => e.key==='Enter' && doLogin());
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email').value;
+  const pw    = document.getElementById('login-pw').value;
+  const btn   = document.getElementById('login-btn');
+  btn.innerHTML = '<span class="spinner"></span> Signing in…';
+  btn.disabled = true;
+  const r = await api('POST', '/login', { email, password: pw });
+  btn.innerHTML = 'Sign In'; btn.disabled = false;
+  if (!r.ok) {
+    document.getElementById('login-alert').innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`;
+    return;
+  }
+  state.user = r.data.user;
+  state.punchStatus = r.data.punch_status;
+  state.page = 'dashboard';
+  await loadPendingCount();
+  render();
+}
+
+// ── Forgot Password ───────────────────────────────────────────────────────────
+function renderForgot() {
+  document.getElementById('app').innerHTML = `
+  <div class="auth-wrap">
+    <div class="auth-hero">
+      <div class="hero-logo">
+        <div class="hero-logo-icon">⏱</div>
+        <div class="hero-logo-text">OnTime</div>
+      </div>
+      <h1 class="hero-title">Reset your<br><span>password</span></h1>
+      <p class="hero-sub">Enter your work email and we'll send you a reset link.</p>
+    </div>
+    <div class="auth-panel">
+      <h2>Forgot password?</h2>
+      <p class="sub">No worries, we'll send you reset instructions.</p>
+      <div id="forgot-alert"></div>
+      <div class="form-group">
+        <label>Email address</label>
+        <input id="forgot-email" type="email" placeholder="you@company.com"/>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="doForgot()">Send Reset Link</button>
+      <div style="text-align:center;margin-top:20px">
+        <button class="link-btn" onclick="state.page='login';render()">← Back to login</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function doForgot() {
+  const email = document.getElementById('forgot-email').value;
+  const r = await api('POST', '/forgot-password', { email });
+  document.getElementById('forgot-alert').innerHTML = r.data.demo_token
+    ? `<div class="alert alert-success">✅ ${r.data.message}<br><br>Demo reset token: <code style="word-break:break-all">${r.data.demo_token}</code></div>`
+    : `<div class="alert alert-success">✅ If that email exists, a reset link has been sent.</div>`;
+}
+
+function renderReset() {
+  const token = new URLSearchParams(location.search).get('token') || '';
+  document.getElementById('app').innerHTML = `
+  <div class="auth-wrap">
+    <div class="auth-hero">
+      <div class="hero-logo"><div class="hero-logo-icon">⏱</div><div class="hero-logo-text">OnTime</div></div>
+      <h1 class="hero-title">Set new<br><span>password</span></h1>
+    </div>
+    <div class="auth-panel">
+      <h2>Create new password</h2>
+      <p class="sub">Choose a strong password for your account.</p>
+      <div id="reset-alert"></div>
+      <div class="form-group"><label>Reset Token</label><input id="reset-token" value="${token}" placeholder="Paste token here"/></div>
+      <div class="form-group"><label>New Password</label><input id="reset-pw" type="password" placeholder="Min 8 characters"/></div>
+      <div class="form-group"><label>Confirm Password</label><input id="reset-pw2" type="password" placeholder="Repeat password"/></div>
+      <button class="btn btn-primary btn-full" onclick="doReset()">Update Password</button>
+    </div>
+  </div>`;
+}
+
+async function doReset() {
+  const token = document.getElementById('reset-token').value;
+  const pw = document.getElementById('reset-pw').value;
+  const pw2 = document.getElementById('reset-pw2').value;
+  if (pw !== pw2) { document.getElementById('reset-alert').innerHTML=`<div class="alert alert-error">Passwords do not match</div>`; return; }
+  const r = await api('POST', '/reset-password', { token, password: pw });
+  if (r.ok) {
+    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-success">✅ Password updated! <button class="link-btn" onclick="state.page='login';render()">Sign in now</button></div>`;
+  } else {
+    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`;
+  }
+}
+
+// ── App Shell ─────────────────────────────────────────────────────────────────
+function renderShell() {
+  const role = state.user.role;
+  const isManager = role === 'manager' || role === 'hr_admin';
+  const isHR = role === 'hr_admin';
+  const initials = state.user.name.split(' ').map(n=>n[0]).join('').slice(0,2);
+
+  document.getElementById('app').innerHTML = `
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <div class="sidebar-logo-icon">⏱</div>
+        <div class="sidebar-logo-text">OnTime <span>Attendance & Leave</span></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Main</div>
+        <button class="nav-item ${state.page==='dashboard'?'active':''}" onclick="navigate('dashboard')">
+          <span class="nav-icon">🏠</span> Dashboard
+        </button>
+        <button class="nav-item ${state.page==='attendance'?'active':''}" onclick="navigate('attendance')">
+          <span class="nav-icon">📋</span> My Attendance
+        </button>
+        <button class="nav-item ${state.page==='leave'?'active':''}" onclick="navigate('leave')">
+          <span class="nav-icon">🏖</span> Leave
+        </button>
+        <button class="nav-item ${state.page==='reports'?'active':''}" onclick="navigate('reports')">
+          <span class="nav-icon">📊</span> Reports
+        </button>
+      </div>
+      ${isManager ? `
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Management</div>
+        <button class="nav-item ${state.page==='team'?'active':''}" onclick="navigate('team')">
+          <span class="nav-icon">👥</span> Team Attendance
+        </button>
+        <button class="nav-item ${state.page==='approvals'?'active':''}" onclick="navigate('approvals')">
+          <span class="nav-icon">✅</span> Leave Approvals
+          ${state.pendingCount > 0 ? `<span class="nav-badge">${state.pendingCount}</span>` : ''}
+        </button>
+      </div>` : ''}
+      ${isHR ? `
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">HR Admin</div>
+        <button class="nav-item ${state.page==='employees'?'active':''}" onclick="navigate('employees')">
+          <span class="nav-icon">🧑‍💼</span> Employees
+        </button>
+        <button class="nav-item ${state.page==='branches'?'active':''}" onclick="navigate('branches')">
+          <span class="nav-icon">🏢</span> Branches & Geofence
+        </button>
+        <button class="nav-item ${state.page==='settings'?'active':''}" onclick="navigate('settings')">
+          <span class="nav-icon">⚙️</span> Settings
+        </button>
+      </div>` : ''}
+      <div class="sidebar-footer">
+        <div class="user-card">
+          <div class="user-avatar">${initials}</div>
+          <div class="user-info">
+            <div class="user-name">${state.user.name}</div>
+            <div class="user-role">${state.user.role.replace('_',' ')}</div>
+          </div>
+          <button class="logout-btn" onclick="doLogout()" title="Sign out">⏻</button>
+        </div>
+      </div>
+    </aside>
+    <main class="main-content" id="page-content"></main>
+  </div>`;
+
+  loadPage();
+}
+
+async function navigate(page) {
+  state.page = page;
+  renderShell();
+}
+
+async function loadPendingCount() {
+  if (state.user.role === 'employee') return;
+  const r = await api('GET', '/leave/pending');
+  if (r.ok) state.pendingCount = r.data.length;
+}
+
+async function doLogout() {
+  await api('POST', '/logout');
+  state.user = null; state.page = 'login'; state.punchStatus = null;
+  render();
+}
+
+// ── Page Dispatcher ───────────────────────────────────────────────────────────
+async function loadPage() {
+  switch(state.page) {
+    case 'dashboard':   return renderDashboard();
+    case 'attendance':  return renderAttendance();
+    case 'leave':       return renderLeave();
+    case 'team':        return renderTeam();
+    case 'approvals':   return renderApprovals();
+    case 'employees':   return renderEmployees();
+    case 'branches':    return renderBranches();
+    case 'settings':    return renderSettings();
+    case 'reports':     return renderReports();
+  }
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function renderDashboard() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `<div class="page-header"><h1>Good ${greeting()}, ${state.user.name.split(' ')[0]} 👋</h1><p>${formatDate(new Date())}</p></div><div id="dash-body"><p>Loading…</p></div>`;
+
+  const [todayR, summaryR, balR, attR] = await Promise.all([
+    api('GET', '/attendance/today'),
+    api('GET', '/attendance/summary'),
+    api('GET', '/leave/balance'),
+    api('GET', '/attendance/me'),
+  ]);
+
+  const today = todayR.data;
+  window._dashAttendance = today;  // expose for overtime monitor
+  const sum   = summaryR.data;
+  const bals  = balR.data;
+  const att   = attR.data;
+
+  const notPunched = !today.punch_in && isWeekday() && state.punchStatus !== 'leave';
+  const alertHtml = notPunched ? `
+    <div class="punch-alert">
+      <div class="punch-alert-icon">⚠️</div>
+      <div class="punch-alert-text">
+        <strong>You haven't punched in today!</strong>
+        <span>Please punch in to record your attendance for today.</span>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="doPunchIn()">Punch In Now</button>
+    </div>` : '';
+
+  document.getElementById('dash-body').innerHTML = `
+    ${alertHtml}
+    <div class="punch-card">
+      <div>
+        <div class="punch-date">${formatDate(new Date())}</div>
+        <div class="punch-time" id="live-clock">--:--:--</div>
+        <div class="punch-status">
+          <div class="punch-item"><div class="punch-item-val">${today.punch_in ? today.punch_in.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH IN</div></div>
+          <div class="punch-item"><div class="punch-item-val">${today.punch_out ? today.punch_out.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH OUT</div></div>
+          <div class="punch-item"><div class="punch-item-val">${today.status ? statusBadge(today.status) : '—'}</div><div class="punch-item-lbl">STATUS</div></div>
+        </div>
+      </div>
+      <div class="punch-actions" id="punch-actions">
+        ${punchButtons(today)}
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num">${sum.ontime||0}</div><div class="stat-label">On-time this month</div></div></div>
+      <div class="stat-card"><div class="stat-icon yellow">⏰</div><div><div class="stat-num">${sum.late||0}</div><div class="stat-label">Late this month</div></div></div>
+      <div class="stat-card"><div class="stat-icon red">❌</div><div><div class="stat-num">${sum.absent||0}</div><div class="stat-label">Absences</div></div></div>
+      <div class="stat-card"><div class="stat-icon purple">🏖</div><div><div class="stat-num">${sum.leave||0}</div><div class="stat-label">Leave days taken</div></div></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-header"><h3>📅 This Month — Attendance</h3></div>
+        <div class="card-body">${buildCalendar(att)}</div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>🏖 Leave Balance</h3></div>
+        <div class="card-body">
+          <div class="leave-bal-list">
+            ${bals.slice(0,5).map(b => {
+              const pct = b.total_days > 0 ? Math.round((b.used_days/b.total_days)*100) : 0;
+              const color = pct>80?'var(--red)':pct>50?'var(--yellow)':'var(--green)';
+              return `<div class="leave-bal-item">
+                <div class="leave-bal-top"><span class="leave-bal-name">${b.leave_name}</span><span class="leave-bal-nums">${b.remaining} / ${b.total_days} days left</span></div>
+                <div class="leave-bal-bar"><div class="leave-bal-fill" style="width:${pct}%;background:${color}"></div></div>
+              </div>`;
+            }).join('')}
+          </div>
+          <button class="btn btn-outline btn-sm w-full mt-4" onclick="navigate('leave')">Apply for Leave →</button>
+        </div>
+      </div>
+    </div>`;
+
+  // Live clock + overtime monitor
+  const tick = () => {
+    const el = document.getElementById('live-clock');
+    if (el) {
+      el.textContent = new Date().toLocaleTimeString('en-GB');
+      checkOvertimeAlert();
+      setTimeout(tick, 1000);
+    }
+  };
+  tick();
+}
+
+function punchButtons(today) {
+  if (!isWeekday()) return `<div style="color:rgba(255,255,255,.5);font-size:14px;text-align:center">Weekend 🎉</div>`;
+  if (today.status === 'leave') return `<div style="color:rgba(255,255,255,.5);font-size:14px;text-align:center">On Leave 🏖</div>`;
+  if (!today.punch_in)  return `<button class="btn btn-success" id="pi-btn" onclick="doPunchIn()">⏰ Punch In</button>`;
+  if (!today.punch_out) return `<button class="btn btn-danger" onclick="doPunchOut()">🔚 Punch Out</button>`;
+  return `<div style="color:rgba(255,255,255,.6);font-size:13px;text-align:center">All done for today!<br>See you tomorrow 👋</div>`;
+}
+
+async function getLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      ()  => resolve(null),
+      { timeout: 8000, enableHighAccuracy: true }
+    );
+  });
+}
+
+async function doPunchIn() {
+  const btn = document.getElementById('pi-btn');
+  if (btn) { btn.innerHTML = '📍 Getting location…'; btn.disabled = true; }
+  const loc = await getLocation();
+  const r = await api('POST', '/punch-in', loc || {});
+  if (!r.ok) {
+    const dist = r.data.distance ? ` (${r.data.distance}m away)` : '';
+    showToast('error', r.data.error + dist);
+    if (btn) { btn.innerHTML = '⏰ Punch In'; btn.disabled = false; }
+    return;
+  }
+  state.punchStatus = r.data.status;
+  const distMsg = r.data.distance != null ? ` · ${r.data.distance}m from office` : '';
+  showToast('success', `Punched in — ${r.data.status}${distMsg}`);
+  await renderDashboard();
+}
+
+async function doPunchOut() {
+  const loc = await getLocation();
+  const r = await api('POST', '/punch-out', loc || {});
+  if (!r.ok) {
+    const dist = r.data.distance ? ` (${r.data.distance}m away)` : '';
+    showToast('error', r.data.error + dist);
+    return;
+  }
+  const distMsg = r.data.distance != null ? ` · ${r.data.distance}m from office` : '';
+  showToast('success', `Punched out successfully${distMsg}`);
+  await renderDashboard();
+}
+
+// ── Overtime & Auto-Checkout System ──────────────────────────────────────────
+
+const _ot = {
+  // Phase: 'regular' = before/at shift end, 'overtime' = user confirmed OT
+  phase:       'regular',
+  alertShown:  false,   // current warning modal visible
+  plannedOut:  null,    // HH:MM — only set when user confirms overtime
+  reportSent:  false,   // missing-checkout email sent
+};
+
+function _parseHM(t) {
+  if (!t) return null;
+  const [h,m] = t.split(':').map(Number);
+  return h*60+m;
+}
+function _nowMins() {
+  const n=new Date(); return n.getHours()*60+n.getMinutes();
+}
+function _minsToHHMM(mins) {
+  const h=Math.floor(mins/60)%24, m=mins%60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+
+async function checkOvertimeAlert() {
+  if (!state.user || state.page !== 'dashboard') return;
+  const att = window._dashAttendance;
+  if (!att || !att.punch_in || att.punch_out || att.status === 'leave') return;
+
+  const now       = _nowMins();
+  const shiftEnd  = _parseHM(state.user.shift_end);  // regular shift end, never changes
+  if (!shiftEnd) return;
+
+  // ── REGULAR PHASE: before/at shift end ─────────────────────────────────────
+  if (_ot.phase === 'regular') {
+    const warnAt = shiftEnd - 15;
+    // Show shift-end warning 15 min before (ask if doing OT)
+    if (now >= warnAt && now < shiftEnd && !_ot.alertShown) {
+      _ot.alertShown = true;
+      showShiftEndModal(shiftEnd);
+      return;
+    }
+    // Past shift end and no overtime — silently auto clock-out, no email
+    if (now >= shiftEnd && !_ot.alertShown && !window._autoCheckedOut) {
+      await performAutoCheckout(_minsToHHMM(shiftEnd) + ':00', false);
+    }
+    return;
+  }
+
+  // ── OVERTIME PHASE: user confirmed overtime, plannedOut is set ────────────
+  if (_ot.phase === 'overtime' && _ot.plannedOut) {
+    const plannedMins = _parseHM(_ot.plannedOut);
+    const warnAt      = plannedMins - 15;
+
+    // Past planned OT end — if modal was shown but ignored, notify supervisor
+    if (now >= plannedMins) {
+      if (_ot.alertShown && !_ot.reportSent) {
+        // Modal was open but user didn't click — send missing report
+        _ot.reportSent = true;
+        const overlay = document.getElementById('ot-overlay');
+        if (overlay) overlay.remove();
+        await api('POST', '/overtime/missing-report');
+        showToast('error', 'You missed your overtime clock-out. Your supervisor has been notified.');
+      } else if (!_ot.alertShown && !window._autoCheckedOut) {
+        // User clicked No on time — auto checkout already handled
+      }
+      return;
+    }
+
+    // Show warning 15 min before OT end
+    if (now >= warnAt && now < plannedMins && !_ot.alertShown) {
+      _ot.alertShown = true;
+      showOvertimeModal(plannedMins);
+    }
+  }
+}
+
+function showShiftEndModal(shiftEndMins) {
+  const existing = document.getElementById('ot-overlay');
+  if (existing) existing.remove();
+  const shiftEndStr = _minsToHHMM(shiftEndMins);
+  const overlay = document.createElement('div');
+  overlay.id = 'ot-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:2000;padding:20px;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:420px;overflow:hidden;animation:slideUp .2s ease">
+      <div style="background:linear-gradient(135deg,#0f1f3d,#1d3461);padding:20px 24px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:28px">⏰</span>
+        <div>
+          <div style="color:white;font-size:16px;font-weight:700">Shift ending soon!</div>
+          <div style="color:rgba(255,255,255,.6);font-size:13px">Your shift ends at ${shiftEndStr}</div>
+        </div>
+      </div>
+      <div style="padding:24px">
+        <p style="color:#334155;font-size:14px;margin-bottom:24px">
+          Your shift ends at <strong>${shiftEndStr}</strong>. You'll be automatically clocked out then.<br><br>
+          Are you planning to work overtime?
+        </p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <button id="se-no-btn"
+            style="padding:12px;border:1.5px solid #e2e8f0;border-radius:8px;background:white;color:#475569;font-size:14px;font-weight:600;cursor:pointer;font-family:DM Sans,sans-serif">
+            No, I'm leaving at ${shiftEndStr}
+          </button>
+          <button id="se-yes-btn"
+            style="padding:12px;border:none;border-radius:8px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;font-size:14px;font-weight:600;cursor:pointer;font-family:DM Sans,sans-serif;box-shadow:0 4px 12px rgba(37,99,235,.35)">
+            Yes, I'm doing overtime
+          </button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  document.getElementById('se-no-btn').onclick = async () => {
+    // User confirms leaving — close modal, auto-checkout fires at shift end naturally
+    overlay.remove();
+    _ot.alertShown = false;
+    // Schedule silent auto-checkout at exact shift end
+    const minsLeft = shiftEndMins - _nowMins();
+    if (minsLeft <= 0) {
+      await performAutoCheckout(shiftEndStr + ':00', false);
+    }
+    // tick will handle it when now >= shiftEnd
+  };
+
+  document.getElementById('se-yes-btn').onclick = () => {
+    overlay.remove();
+    _ot.alertShown = false;
+    // Switch to overtime phase — show OT hours input
+    _ot.phase = 'overtime';
+    _ot.plannedOut = shiftEndStr;  // temporary — will be updated by OT modal
+    showOvertimeModal(shiftEndMins);
+  };
+}
+
+function showOvertimeModal(plannedMins) {
+  const existing = document.getElementById('ot-overlay');
+  if (existing) existing.remove();
+  const plannedStr = _minsToHHMM(plannedMins);
+  const overlay = document.createElement('div');
+  overlay.id = 'ot-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:2000;padding:20px;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:440px;overflow:hidden;animation:slideUp .2s ease">
+      <div style="background:linear-gradient(135deg,#92400e,#b45309);padding:20px 24px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:28px">🕐</span>
+        <div>
+          <div style="color:white;font-size:16px;font-weight:700">Overtime ending soon!</div>
+          <div style="color:rgba(255,255,255,.7);font-size:13px">Your overtime ends at ${plannedStr}</div>
+        </div>
+      </div>
+      <div style="padding:24px">
+        <p style="color:#334155;font-size:14px;margin-bottom:20px">
+          Your overtime clock-out is <strong>${plannedStr}</strong>. If you don't respond within 15 minutes, 
+          your supervisor will be notified of a missing clock-out.
+        </p>
+        <div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:10px;padding:16px;margin-bottom:20px">
+          <label style="display:block;font-size:13px;font-weight:600;color:#1e40af;margin-bottom:8px">Working overtime? Enter extra hours:</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input id="ot-hours" type="number" min="0.5" max="8" step="0.5" value="1"
+              style="width:80px;padding:8px 12px;border:1.5px solid #bfdbfe;border-radius:8px;font-size:16px;font-weight:700;text-align:center;font-family:DM Mono,monospace;outline:none"/>
+            <span style="color:#1e40af;font-size:14px;font-weight:500">extra hour(s)</span>
+          </div>
+          <div id="ot-preview" style="margin-top:8px;font-size:12px;color:#64748b;font-style:italic"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <button id="ot-no-btn"
+            style="padding:12px;border:1.5px solid #e2e8f0;border-radius:8px;background:white;color:#475569;font-size:14px;font-weight:600;cursor:pointer;font-family:DM Sans,sans-serif">
+            No — clock me out at ${plannedStr}
+          </button>
+          <button id="ot-yes-btn"
+            style="padding:12px;border:none;border-radius:8px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;font-size:14px;font-weight:600;cursor:pointer;font-family:DM Sans,sans-serif;box-shadow:0 4px 12px rgba(37,99,235,.35)">
+            Yes, I'm staying
+          </button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Preview
+  const hoursInput = document.getElementById('ot-hours');
+  const preview    = document.getElementById('ot-preview');
+  const updatePreview = () => {
+    const h = parseFloat(hoursInput.value) || 0;
+    const newMins = plannedMins + Math.round(h * 60);
+    preview.textContent = `New clock-out: ${_minsToHHMM(newMins)} · Next reminder at ${_minsToHHMM(newMins - 15)}`;
+  };
+  hoursInput.addEventListener('input', updatePreview);
+  updatePreview();
+
+  document.getElementById('ot-no-btn').onclick  = () => handleOvertimeNo(plannedStr);
+  document.getElementById('ot-yes-btn').onclick = () => handleOvertimeYes(plannedMins);
+}
+
+async function handleOvertimeNo(plannedStr) {
+  const overlay = document.getElementById('ot-overlay');
+  if (overlay) overlay.remove();
+  _ot.alertShown = false;
+  // User responded — auto clock-out silently, no supervisor report needed
+  await performAutoCheckout(plannedStr + ':00', false);
+}
+
+async function handleOvertimeYes(currentPlannedMins) {
+  const hoursEl   = document.getElementById('ot-hours');
+  const extra     = parseFloat(hoursEl ? hoursEl.value : 1) || 1;
+  const newMins   = currentPlannedMins + Math.round(extra * 60);
+  const newStr    = _minsToHHMM(newMins);
+  await api('POST', '/overtime/set', { planned_checkout: newStr });
+  _ot.plannedOut  = newStr;
+  _ot.alertShown  = false;
+  _ot.phase       = 'overtime';   // now in overtime phase — supervisor notified if missed
+  const overlay = document.getElementById('ot-overlay');
+  if (overlay) overlay.remove();
+  showToast('success', `Overtime logged! Reminder at ${_minsToHHMM(newMins - 15)}, auto clock-out at ${newStr}`);
+}
+
+async function performAutoCheckout(timeStr, isOvertime=false) {
+  if (window._autoCheckedOut) return;
+  window._autoCheckedOut = true;
+  const r = await api('POST', '/overtime/auto-checkout', { time: timeStr });
+  if (r.ok && !r.data.already_done) {
+    window._dashAttendance = { ...window._dashAttendance, punch_out: timeStr };
+    if (isOvertime) {
+      // Overtime auto-checkout: notify supervisor since money is involved
+      await api('POST', '/overtime/missing-report');
+      showToast('success', `Auto clocked out at ${timeStr.slice(0,5)} ✅ · Supervisor notified`);
+    } else {
+      showToast('success', `Auto clocked out at ${timeStr.slice(0,5)} ✅`);
+    }
+    if (state.page === 'dashboard') await renderDashboard();
+  }
+}
+
+function buildCalendar(att) {
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  const attMap = {};
+  att.forEach(a => { attMap[a.date] = a.status; });
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const labels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let html = `<div class="att-calendar">`;
+  labels.forEach(l => html += `<div class="att-day-label">${l}</div>`);
+  for(let i=0;i<firstDay;i++) html += `<div class="att-day empty"></div>`;
+  for(let d=1;d<=daysInMonth;d++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dow = new Date(year,month,d).getDay();
+    const isToday = d === now.getDate();
+    const future = new Date(year,month,d) > now;
+    const status = attMap[dateStr];
+    let cls = 'att-day';
+    let label = '';
+    if (dow===0||dow===6) { cls += ' weekend'; }
+    else if (future) { cls += ' future'; }
+    else if (status) { cls += ` ${status}`; label = status==='ontime'?'✓':status==='late'?'L':status==='leave'?'HL':'✗'; }
+    else { cls += ' absent'; label = '✗'; }
+    if (isToday) cls += ' today';
+    html += `<div class="${cls}"><div class="att-day-num">${d}</div><div class="att-day-status">${label}</div></div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+// ── My Attendance ─────────────────────────────────────────────────────────────
+async function renderAttendance() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header flex justify-between items-center">
+      <div><h1>📋 My Attendance</h1><p>Your complete attendance history</p></div>
+      <div class="flex gap-2">
+        <input type="month" id="att-month" value="${new Date().toISOString().slice(0,7)}" style="padding:8px 12px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px" onchange="loadAttHistory()">
+      </div>
+    </div>
+    <div id="att-content">Loading…</div>`;
+  await loadAttHistory();
+}
+
+async function loadAttHistory() {
+  const month = document.getElementById('att-month').value;
+  const [attR, sumR] = await Promise.all([
+    api('GET', `/attendance/me?month=${month}`),
+    api('GET', '/attendance/summary'),
+  ]);
+  const att = attR.data;
+  const sum = sumR.data;
+
+  document.getElementById('att-content').innerHTML = `
+    <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
+      <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num">${sum.ontime||0}</div><div class="stat-label">On-time</div></div></div>
+      <div class="stat-card"><div class="stat-icon yellow">⏰</div><div><div class="stat-num">${sum.late||0}</div><div class="stat-label">Late</div></div></div>
+      <div class="stat-card"><div class="stat-icon red">❌</div><div><div class="stat-num">${sum.absent||0}</div><div class="stat-label">Absent</div></div></div>
+      <div class="stat-card"><div class="stat-icon purple">🏖</div><div><div class="stat-num">${sum.leave||0}</div><div class="stat-label">On Leave</div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>Attendance Records</h3><span class="text-sm text-muted">${att.length} records found</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Day</th><th>Punch In</th><th>Punch Out</th><th>Duration</th><th>Status</th></tr></thead>
+          <tbody>
+            ${att.length ? att.map(a => {
+              const duration = a.punch_in && a.punch_out ? calcDuration(a.punch_in, a.punch_out) : '—';
+              return `<tr>
+                <td class="font-mono">${a.date}</td>
+                <td>${dayName(a.date)}</td>
+                <td class="font-mono">${a.punch_in ? a.punch_in.slice(0,5) : '—'}</td>
+                <td class="font-mono">${a.punch_out ? a.punch_out.slice(0,5) : '—'}</td>
+                <td>${duration}</td>
+                <td>${badgeHtml(a.status)}</td>
+              </tr>`;
+            }).join('') : '<tr><td colspan="6" class="empty-state"><div class="icon">📭</div><p>No records for this month</p></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── Leave Page ────────────────────────────────────────────────────────────────
+async function renderLeave() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header flex justify-between items-center">
+      <div><h1>🏖 Leave Management</h1><p>Apply and track your leave requests</p></div>
+      <button class="btn btn-primary" onclick="showApplyModal()">+ Apply for Leave</button>
+    </div>
+    <div id="leave-content">Loading…</div>`;
+  await loadLeaveData();
+}
+
+async function loadLeaveData() {
+  const [balR, reqR] = await Promise.all([
+    api('GET', '/leave/balance'),
+    api('GET', '/leave/my-requests'),
+  ]);
+  const bals = balR.data;
+  const reqs = reqR.data;
+
+  document.getElementById('leave-content').innerHTML = `
+    <div class="grid-3">
+      <div>
+        <div class="card mb-4">
+          <div class="card-header"><h3>📊 Leave Balance ${new Date().getFullYear()}</h3></div>
+          <div class="card-body">
+            <div class="leave-bal-list">
+              ${bals.map(b => {
+                const pct = b.total_days > 0 ? Math.round((b.used_days/b.total_days)*100) : 0;
+                const color = pct>80?'var(--red)':pct>50?'var(--yellow)':'var(--green)';
+                return `<div class="leave-bal-item">
+                  <div class="leave-bal-top">
+                    <span class="leave-bal-name">${b.leave_name}</span>
+                    <span class="leave-bal-nums font-mono">${b.remaining}/${b.total_days}</span>
+                  </div>
+                  <div class="leave-bal-bar"><div class="leave-bal-fill" style="width:${pct}%;background:${color}"></div></div>
+                  <div style="font-size:11px;color:var(--text-s);margin-top:3px">${b.used_days} used · ${b.remaining} remaining</div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-header"><h3>📝 My Leave Requests</h3></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Type</th><th>Dates</th><th>Days</th><th>Status</th><th>Remarks</th></tr></thead>
+              <tbody>
+                ${reqs.length ? reqs.map(r => `<tr>
+                  <td><strong>${r.leave_name}</strong><div style="font-size:12px;color:var(--text-s)">${r.reason||''}</div></td>
+                  <td class="text-sm">${formatLeaveDates(r)}</td>
+                  <td>${r.days}d</td>
+                  <td>${badgeHtml(r.status)}</td>
+                  <td style="font-size:12px;color:var(--text-s)">${r.remarks||'—'}</td>
+                </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state"><div class="icon">📭</div><p>No leave requests yet</p></div></td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function showApplyModal() {
+  const typesR = await api('GET', '/leave/types');
+  const balR   = await api('GET', '/leave/balance');
+  const attR   = await api('GET', '/leave/my-requests');
+  const types  = typesR.data;
+  const bals   = balR.data;
+  const reqs   = attR.data;
+  const balMap = {};
+  bals.forEach(b => balMap[b.leave_type_id] = b.remaining);
+
+  // ── Indonesia National Holidays 2025 & 2026 ──────────────────────────────────
+    const ID_HOLIDAYS = {
+    "2025-01-01": "New Year's Day",
+    "2025-01-27": "Isra Miraj",
+    "2025-01-28": "Chinese New Year",
+    "2025-01-29": "Chinese New Year Holiday",
+    "2025-03-29": "Nyepi (Saka New Year)",
+    "2025-03-31": "Eid al-Fitr Eve",
+    "2025-04-01": "Eid al-Fitr Day 1",
+    "2025-04-02": "Eid al-Fitr Day 2",
+    "2025-04-03": "Eid al-Fitr Holiday",
+    "2025-04-04": "Eid al-Fitr Holiday",
+    "2025-04-07": "Eid al-Fitr Holiday",
+    "2025-04-18": "Good Friday",
+    "2025-05-01": "Labour Day",
+    "2025-05-12": "Vesak Day",
+    "2025-05-13": "Vesak Day Holiday",
+    "2025-05-29": "Ascension Day",
+    "2025-06-01": "Pancasila Day",
+    "2025-06-06": "Eid al-Adha Day",
+    "2025-06-09": "Eid al-Adha Holiday",
+    "2025-06-27": "Islamic New Year",
+    "2025-08-17": "Independence Day",
+    "2025-09-05": "Prophet Birthday",
+    "2025-12-25": "Christmas Day",
+    "2025-12-26": "Christmas Holiday",
+    "2026-01-01": "New Year's Day",
+    "2026-01-16": "Isra Miraj",
+    "2026-01-17": "Chinese New Year Eve",
+    "2026-01-28": "Chinese New Year",
+    "2026-03-03": "Eid al-Fitr Eve",
+    "2026-03-04": "Eid al-Fitr Day 1",
+    "2026-03-05": "Eid al-Fitr Day 2",
+    "2026-03-06": "Eid al-Fitr Holiday",
+    "2026-03-09": "Eid al-Fitr Holiday",
+    "2026-03-10": "Eid al-Fitr Holiday",
+    "2026-03-19": "Nyepi (Saka New Year)",
+    "2026-04-03": "Good Friday",
+    "2026-05-01": "Labour Day",
+    "2026-05-14": "Ascension Day",
+    "2026-05-24": "Vesak Day",
+    "2026-05-13": "Eid al-Adha Eve",
+    "2026-05-27": "Eid al-Adha Day",
+    "2026-06-01": "Pancasila Day",
+    "2026-06-17": "Islamic New Year",
+    "2026-08-17": "Independence Day",
+    "2026-08-26": "Prophet Birthday",
+    "2026-12-25": "Christmas Day",
+    "2026-12-26": "Christmas Holiday",
+    "2026-12-31": "New Year Eve Holiday",
+  };
+  const holidayDates = new Set(Object.keys(ID_HOLIDAYS));
+
+  // Build set of already-applied dates (pending/approved) to mark as unavailable
+  const takenDates = new Set();
+  reqs.forEach(r => {
+    if (r.status === 'pending' || r.status === 'approved' || r.status === 'approvedd') {
+      if (r.dates_json) {
+        // Use exact selected dates if available
+        JSON.parse(r.dates_json).forEach(d => takenDates.add(d));
+      } else {
+        // Fallback: iterate range for legacy records
+        let cur = new Date(r.start_date);
+        const end = new Date(r.end_date);
+        while (cur <= end) { takenDates.add(cur.toISOString().slice(0,10)); cur.setDate(cur.getDate()+1); }
+      }
+    }
+  });
+
+  // Calendar state
+  const today = new Date(); today.setHours(0,0,0,0);
+  let calYear  = today.getFullYear();
+  let calMonth = today.getMonth();
+  let selectedDates = new Set(); // set of 'YYYY-MM-DD' strings
+
+  const modalId = 'leave-cal-modal';
+
+  showModal('Apply for Leave', `
+    <div id="apply-alert"></div>
+    <div class="form-group">
+      <label>Leave Type</label>
+      <select id="lt-select">
+        ${types.map(t => `<option value="${t.id}">${t.name} (${balMap[t.id]||0} days remaining)</option>`).join('')}
+      </select>
+    </div>
+    <div class="lc-wrap">
+      <div class="lc-header">
+        <button class="lc-nav" id="lc-prev">&#8249;</button>
+        <span id="lc-title"></span>
+        <button class="lc-nav" id="lc-next">&#8250;</button>
+      </div>
+      <div class="lc-day-labels">
+        ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div>${d}</div>`).join('')}
+      </div>
+      <div class="lc-grid" id="lc-grid"></div>
+      <div class="lc-legend">
+        <span><span class="lc-dot lc-dot-sel"></span> Selected</span>
+        <span><span class="lc-dot lc-dot-taken"></span> Already applied</span>
+        <span><span class="lc-dot lc-dot-holiday"></span> Public Holiday</span>
+        <span><span class="lc-dot lc-dot-weekend"></span> Weekend</span>
+      </div>
+    </div>
+    <div class="alert alert-info" id="days-calc" style="margin-top:12px">Click dates to select your leave days (weekends auto-skipped)</div>
+    <div class="form-group" style="margin-top:12px"><label>Reason</label><textarea id="lt-reason" rows="2" placeholder="Brief description of your leave reason…"></textarea></div>`,
+    async () => {
+      const ltId   = document.getElementById('lt-select').value;
+      const reason = document.getElementById('lt-reason').value;
+      const sorted = [...selectedDates].sort();
+      if (sorted.length === 0) { document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">Please select at least one leave day</div>`; return false; }
+      // Send the exact selected dates so backend counts only those days
+      const r = await api('POST', '/leave/apply', { leave_type_id: parseInt(ltId), dates: sorted, reason });
+      if (!r.ok) { document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">⚠ ${r.data.error}</div>`; return false; }
+      await loadLeaveData();
+      return true;
+    }, 'modal-lg');
+
+  function renderCalendar() {
+    const title = document.getElementById('lc-title');
+    const grid  = document.getElementById('lc-grid');
+    if (!title || !grid) return;
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    title.textContent = `${monthNames[calMonth]} ${calYear}`;
+
+    const firstDay = new Date(calYear, calMonth, 1).getDay();
+    const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
+    let html = '';
+    for (let i=0; i<firstDay; i++) html += `<div></div>`;
+    for (let d=1; d<=daysInMonth; d++) {
+      const dateStr = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const dObj = new Date(calYear, calMonth, d);
+      const dow = dObj.getDay();
+      const isWeekend = dow===0 || dow===6;
+      const isPast    = dObj < today;
+      const isTaken   = takenDates.has(dateStr);
+      const isSel     = selectedDates.has(dateStr);
+      const isHoliday = holidayDates.has(dateStr);
+      const isToday   = dateStr === today.toISOString().slice(0,10);
+      const holidayName = ID_HOLIDAYS[dateStr] || '';
+      let cls = 'lc-day';
+      if (isWeekend)        cls += ' lc-weekend';
+      else if (isHoliday)   cls += ' lc-holiday';
+      else if (isPast || isTaken) cls += ' lc-disabled';
+      else if (isSel)       cls += ' lc-sel';
+      else                  cls += ' lc-avail';
+      if (isToday) cls += ' lc-today';
+      const clickable = !isWeekend && !isPast && !isTaken && !isHoliday;
+      const tooltip = holidayName ? `title="${holidayName}"` : '';
+      html += `<div class="${cls}" ${clickable ? `onclick="lcToggle('${dateStr}')"` : ''} ${tooltip}>${d}${isHoliday ? '<span class="lc-hflag">🇮🇩</span>' : ''}</div>`;
+    }
+    grid.innerHTML = html;
+
+    // Update summary
+    const workDays = [...selectedDates].filter(ds => { const d=new Date(ds); return d.getDay()>0&&d.getDay()<6 && !holidayDates.has(ds); }).length;
+    const calc = document.getElementById('days-calc');
+    if (calc) {
+      calc.textContent = workDays > 0
+        ? `📅 ${workDays} working day${workDays!==1?'s':''} selected — will be deducted from your balance`
+        : 'Click dates to select your leave days (weekends auto-skipped)';
+    }
+  }
+
+  // Expose toggle to global scope
+  window.lcToggle = (dateStr) => {
+    if (selectedDates.has(dateStr)) selectedDates.delete(dateStr);
+    else selectedDates.add(dateStr);
+    renderCalendar();
+  };
+
+  setTimeout(() => {
+    document.getElementById('lc-prev').onclick = () => {
+      calMonth--; if (calMonth<0) { calMonth=11; calYear--; }
+      renderCalendar();
+    };
+    document.getElementById('lc-next').onclick = () => {
+      calMonth++; if (calMonth>11) { calMonth=0; calYear++; }
+      renderCalendar();
+    };
+    renderCalendar();
+  }, 30);
+}
+
+// ── Team Attendance (Manager / HR) ────────────────────────────────────────────
+async function renderTeam() {
+  const el = document.getElementById('page-content');
+  const today = new Date().toISOString().slice(0,10);
+  el.innerHTML = `
+    <div class="page-header flex justify-between items-center">
+      <div><h1>👥 Team Attendance</h1><p>Monitor your team's daily attendance</p></div>
+      <input type="date" id="team-date" value="${today}" style="padding:8px 12px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px" onchange="loadTeamData()">
+    </div>
+    <div id="team-content">Loading…</div>`;
+  await loadTeamData();
+}
+
+async function loadTeamData() {
+  const date = document.getElementById('team-date').value;
+  const r = await api('GET', `/attendance/team?date=${date}`);
+  const rows = r.data;
+  const counts = { ontime:0, late:0, absent:0, leave:0, not_in:0 };
+  rows.forEach(r => {
+    if (!r.punch_in && r.status !== 'leave') counts.not_in++;
+    else if (r.status) counts[r.status] = (counts[r.status]||0)+1;
+  });
+
+  const missingR = await api('GET', `/attendance/missing-checkouts?date=${date}`);
+  const missing  = missingR.ok ? missingR.data : [];
+
+  document.getElementById('team-content').innerHTML = `
+    <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:20px">
+      <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num">${counts.ontime}</div><div class="stat-label">On-time</div></div></div>
+      <div class="stat-card"><div class="stat-icon yellow">⏰</div><div><div class="stat-num">${counts.late}</div><div class="stat-label">Late</div></div></div>
+      <div class="stat-card"><div class="stat-icon red">❌</div><div><div class="stat-num">${counts.absent}</div><div class="stat-label">Absent</div></div></div>
+      <div class="stat-card"><div class="stat-icon purple">🏖</div><div><div class="stat-num">${counts.leave}</div><div class="stat-label">On Leave</div></div></div>
+      <div class="stat-card"><div class="stat-icon blue">⏳</div><div><div class="stat-num">${counts.not_in}</div><div class="stat-label">Not Punched</div></div></div>
+    </div>
+    ${missing.length ? `
+    <div class="card mb-4" style="border:1.5px solid #fecaca">
+      <div class="card-header" style="background:#fef2f2">
+        <h3 style="color:#dc2626">⚠️ Missing Clock-Out (${missing.length})</h3>
+        <span class="text-sm text-muted">Enter clock-out time manually</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Employee</th><th>Department</th><th>Shift End</th><th>Clock In</th><th>Enter Clock-Out Time</th><th></th></tr></thead>
+          <tbody>
+            ${missing.map(m => `<tr>
+              <td><strong>${m.name}</strong><div style="font-size:11px;color:var(--text-s)">${m.employee_id}</div></td>
+              <td>${m.department||'—'}</td>
+              <td class="font-mono">${m.shift_end||'—'}</td>
+              <td class="font-mono">${m.punch_in ? m.punch_in.slice(0,5) : '—'}</td>
+              <td><input type="time" id="mc-${m.id}" style="padding:7px 10px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Mono,monospace;font-size:14px" value="${m.shift_end||'18:00'}"/></td>
+              <td><button class="btn btn-primary btn-sm" onclick="saveManualCheckout(${m.id},'${date}')">Save</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+    <div class="card">
+      <div class="card-header"><h3>Team Status for ${date}</h3><span class="text-sm text-muted">${rows.length} employees</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Employee</th><th>ID</th><th>Department</th><th>Punch In</th><th>Punch Out</th><th>Location</th><th>Status</th></tr></thead>
+          <tbody>
+            ${rows.map(r => `<tr>
+              <td><strong>${r.name}</strong></td>
+              <td class="font-mono text-sm">${r.employee_id}</td>
+              <td>${r.department||'—'}</td>
+              <td class="font-mono">${r.punch_in ? r.punch_in.slice(0,5) : '—'}</td>
+              <td class="font-mono">${r.punch_out ? r.punch_out.slice(0,5) : '—'}</td>
+              <td style="font-size:12px;color:var(--text-s)">${r.geo_in ? '📍 '+r.geo_in : '—'}</td>
+              <td>${r.status ? badgeHtml(r.status) : '<span class="badge badge-grey">Not punched</span>'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function saveManualCheckout(userId, date) {
+  const timeEl = document.getElementById(`mc-${userId}`);
+  if (!timeEl || !timeEl.value) { showToast('error','Please enter a time'); return; }
+  const r = await api('POST', '/overtime/manual-checkout', { user_id: userId, date, time: timeEl.value });
+  if (r.ok) {
+    showToast('success', 'Clock-out time saved');
+    await loadTeamData();
+  } else {
+    showToast('error', r.data.error || 'Failed to save');
+  }
+}
+
+// ── Leave Approvals ───────────────────────────────────────────────────────────
+async function renderApprovals() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `<div class="page-header"><h1>✅ Leave Approvals</h1><p>Review and action pending leave requests</p></div><div id="approvals-content">Loading…</div>`;
+  await loadApprovals();
+}
+
+async function loadApprovals() {
+  const r = await api('GET', '/leave/pending');
+  const rows = r.data;
+  state.pendingCount = rows.length;
+
+  document.getElementById('approvals-content').innerHTML = `
+    <div class="card">
+      <div class="card-header"><h3>Pending Requests</h3><span class="badge badge-yellow">${rows.length} pending</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Employee</th><th>Department</th><th>Leave Type</th><th>Dates</th><th>Days</th><th>Reason</th><th>Submitted</th><th>Action</th></tr></thead>
+          <tbody>
+            ${rows.length ? rows.map(r => `<tr>
+              <td><strong>${r.employee_name}</strong><div class="text-xs text-muted">${r.employee_id}</div></td>
+              <td>${r.department||'—'}</td>
+              <td>${r.leave_name}</td>
+              <td class="text-sm">${formatLeaveDates(r)}</td>
+              <td>${r.days}d</td>
+              <td style="max-width:180px;font-size:13px">${r.reason||'—'}</td>
+              <td class="text-sm text-muted">${r.created_at.slice(0,10)}</td>
+              <td>
+                <div class="flex gap-2">
+                  <button class="btn btn-success btn-sm" onclick="actionLeave(${r.id},'approve')">Approve</button>
+                  <button class="btn btn-danger btn-sm" onclick="actionLeave(${r.id},'reject')">Reject</button>
+                </div>
+              </td>
+            </tr>`).join('') : '<tr><td colspan="8"><div class="empty-state"><div class="icon">🎉</div><p>No pending leave requests</p></div></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function actionLeave(id, action) {
+  let remarks = '';
+  if (action === 'reject') {
+    remarks = prompt('Reason for rejection (optional):') || '';
+  }
+  const r = await api('POST', '/leave/action', { request_id: id, action, remarks });
+  if (r.ok) { await loadApprovals(); renderShell(); }
+  else alert(r.data.error);
+}
+
+// ── Employees (HR Admin) ──────────────────────────────────────────────────────
+async function renderEmployees() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header flex justify-between items-center">
+      <div><h1>🧑‍💼 Employees</h1><p>Manage your workforce</p></div>
+      <button class="btn btn-primary" onclick="showAddEmployee()">+ Add Employee</button>
+    </div>
+    <div id="emp-content">Loading…</div>`;
+  await loadEmployees();
+}
+
+async function loadEmployees() {
+  const r = await api('GET', '/users');
+  const users = r.data;
+  document.getElementById('emp-content').innerHTML = `
+    <div class="card">
+      <div class="card-header"><h3>All Employees</h3><span class="text-sm text-muted">${users.length} total</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>ID</th><th>Email</th><th>Department</th><th>Supervisor</th><th>Branch</th><th>Role</th><th>Shift</th><th></th></tr></thead>
+          <tbody>
+            ${users.map(u => {
+              const ini = u.name.split(' ').map(n=>n[0]).join('').slice(0,2);
+              return `<tr>
+                <td><div class="flex items-center gap-3">
+                  <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--cyan));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:white;flex-shrink:0">${ini}</div>
+                  <div><div style="font-weight:600">${u.name}</div><div style="font-size:11px;color:var(--text-s)">${u.email}</div></div>
+                </div></td>
+                <td class="font-mono text-sm">${u.employee_id}</td>
+                <td class="text-sm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${u.email}</td>
+                <td>${u.department||'—'}</td>
+                <td class="text-sm">${u.manager_name||'—'}</td>
+                <td class="text-sm">${u.branch_name||'—'}</td>
+                <td>${roleBadge(u.role)}</td>
+                <td class="font-mono text-sm">${u.shift_start}–${u.shift_end}</td>
+                <td><button class="btn btn-ghost btn-sm" onclick="showEditEmployee(${JSON.stringify(u).replace(/"/g,'&quot;')})">Edit</button></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function empFormHtml(alertId, u={}) {
+  const usersR = await api('GET', '/users');
+  const branchR = await api('GET', '/branches');
+  const supervisors = usersR.data.filter(x => x.role !== 'employee');
+  const branches = branchR.data;
+  return `
+    <div id="${alertId}"></div>
+    <div class="form-row">
+      <div class="form-group"><label>First Name *</label><input id="ae-first" value="${u.first_name||''}" placeholder="Jane"/></div>
+      <div class="form-group"><label>Last Name *</label><input id="ae-last" value="${u.last_name||''}" placeholder="Doe"/></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Employee ID *</label><input id="ae-eid" value="${u.employee_id||''}" placeholder="EMP004"/></div>
+      <div class="form-group"><label>Email *</label><input id="ae-email" type="email" value="${u.email||''}" placeholder="jane@company.com"/></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Department</label><input id="ae-dept" value="${u.department||''}" placeholder="Engineering"/></div>
+      <div class="form-group"><label>Role</label>
+        <select id="ae-role">
+          <option value="employee" ${u.role==='employee'?'selected':''}>Employee</option>
+          <option value="manager"  ${u.role==='manager'?'selected':''}>Manager</option>
+          <option value="hr_admin" ${u.role==='hr_admin'?'selected':''}>HR Admin</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Supervisor (for leave approval)</label>
+        <select id="ae-mgr">
+          <option value="">— None —</option>
+          ${supervisors.map(m=>`<option value="${m.id}" ${u.manager_id==m.id?'selected':''}>${m.name} · ${m.role.replace('_',' ')}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label>Branch</label>
+        <select id="ae-branch">
+          <option value="">— None —</option>
+          ${branches.map(b=>`<option value="${b.id}" ${u.branch_id==b.id?'selected':''}>${b.name}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Shift Start</label><input id="ae-ss" type="time" value="${u.shift_start||'09:00'}"/></div>
+      <div class="form-group"><label>Shift End</label><input id="ae-se" type="time" value="${u.shift_end||'18:00'}"/></div>
+    </div>
+    <div class="form-group"><label>Temp Password ${u.id?'(leave blank to keep current)':''}</label><input id="ae-pw" type="password" placeholder="Password123"/></div>`;
+}
+
+function empFormData() {
+  return {
+    first_name:  document.getElementById('ae-first').value.trim(),
+    last_name:   document.getElementById('ae-last').value.trim(),
+    employee_id: document.getElementById('ae-eid').value.trim(),
+    email:       document.getElementById('ae-email').value.trim(),
+    department:  document.getElementById('ae-dept').value.trim(),
+    role:        document.getElementById('ae-role').value,
+    manager_id:  document.getElementById('ae-mgr').value || null,
+    branch_id:   document.getElementById('ae-branch').value || null,
+    shift_start: document.getElementById('ae-ss').value,
+    shift_end:   document.getElementById('ae-se').value,
+    password:    document.getElementById('ae-pw').value,
+  };
+}
+
+async function showAddEmployee() {
+  const html = await empFormHtml('add-emp-alert');
+  showModal('Add New Employee', html, async () => {
+    const data = empFormData();
+    if (!data.first_name || !data.last_name || !data.email || !data.employee_id) {
+      document.getElementById('add-emp-alert').innerHTML = `<div class="alert alert-error">First name, last name, employee ID and email are required</div>`; return false;
+    }
+    const r = await api('POST', '/users/add', data);
+    if (!r.ok) { document.getElementById('add-emp-alert').innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`; return false; }
+    showToast('success', 'Employee added successfully');
+    await loadEmployees(); return true;
+  });
+}
+
+async function showEditEmployee(u) {
+  const html = await empFormHtml('edit-emp-alert', u);
+  showModal(`Edit — ${u.name}`, html, async () => {
+    const data = { id: u.id, ...empFormData() };
+    if (!data.first_name || !data.last_name || !data.email) {
+      document.getElementById('edit-emp-alert').innerHTML = `<div class="alert alert-error">Name and email are required</div>`; return false;
+    }
+    const r = await api('POST', '/users/update', data);
+    if (!r.ok) { document.getElementById('edit-emp-alert').innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`; return false; }
+    showToast('success', 'Employee updated');
+    await loadEmployees(); return true;
+  });
+}
+
+// ── Branches & Geofence ───────────────────────────────────────────────────────
+async function renderBranches() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header flex justify-between items-center">
+      <div><h1>🏢 Branches & Geofence</h1><p>Set office locations for punch-in validation</p></div>
+      <button class="btn btn-primary" onclick="showBranchModal()">+ Add Branch</button>
+    </div>
+    <div id="branch-content">Loading…</div>`;
+  await loadBranches();
+}
+
+async function loadBranches() {
+  const r = await api('GET', '/branches');
+  const branches = r.data;
+  document.getElementById('branch-content').innerHTML = `
+    <div class="card">
+      <div class="card-header"><h3>Office Locations</h3><span class="text-sm text-muted">${branches.length} branch(es)</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Branch Name</th><th>Address</th><th>Coordinates</th><th>Radius</th><th></th></tr></thead>
+          <tbody>
+            ${branches.length ? branches.map(b => `<tr>
+              <td><strong>${b.name}</strong></td>
+              <td class="text-sm">${b.address||'—'}</td>
+              <td class="font-mono text-sm">${b.latitude!=null ? `${b.latitude.toFixed(5)}, ${b.longitude.toFixed(5)}` : '⚠ Not set'}</td>
+              <td>${b.radius_m}m</td>
+              <td><div class="flex gap-2">
+                <button class="btn btn-ghost btn-sm" onclick="showBranchModal(${JSON.stringify(b).replace(/"/g,'&quot;')})">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteBranch(${b.id},'${b.name}')">Delete</button>
+              </div></td>
+            </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state"><div class="icon">🏢</div><p>No branches yet. Add your first office location.</p></div></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="alert alert-info" style="margin-top:16px">
+      💡 <strong>How geofencing works:</strong> Employees must be within the branch radius to punch in or out. 
+      Coordinates are GPS latitude/longitude — you can get them from Google Maps (right-click any location → "What's here?").
+    </div>`;
+}
+
+function showBranchModal(b={}) {
+  const isEdit = !!b.id;
+  showModal(isEdit ? `Edit — ${b.name}` : 'Add Branch', `
+    <div id="branch-alert"></div>
+    <div class="form-group"><label>Branch Name *</label><input id="br-name" value="${b.name||''}" placeholder="Head Office"/></div>
+    <div class="form-group"><label>Address</label><input id="br-addr" value="${b.address||''}" placeholder="Jl. Sudirman No.1, Jakarta"/></div>
+    <div class="form-row">
+      <div class="form-group"><label>Latitude *</label><input id="br-lat" type="number" step="any" value="${b.latitude||''}" placeholder="-6.2088"/></div>
+      <div class="form-group"><label>Longitude *</label><input id="br-lon" type="number" step="any" value="${b.longitude||''}" placeholder="106.8456"/></div>
+    </div>
+    <div class="form-group"><label>Allowed Radius (meters)</label><input id="br-rad" type="number" value="${b.radius_m||200}" min="50" max="5000"/></div>
+    <button class="btn btn-ghost btn-sm" onclick="useMyLocation()" style="margin-top:-4px">📍 Use my current location</button>`,
+    async () => {
+      const data = {
+        id: b.id || null,
+        name: document.getElementById('br-name').value.trim(),
+        address: document.getElementById('br-addr').value.trim(),
+        latitude: parseFloat(document.getElementById('br-lat').value) || null,
+        longitude: parseFloat(document.getElementById('br-lon').value) || null,
+        radius_m: parseInt(document.getElementById('br-rad').value) || 200,
+      };
+      if (!data.name) { document.getElementById('branch-alert').innerHTML=`<div class="alert alert-error">Branch name is required</div>`; return false; }
+      if (!data.latitude || !data.longitude) { document.getElementById('branch-alert').innerHTML=`<div class="alert alert-error">Coordinates are required for geofencing</div>`; return false; }
+      const r = await api('POST', '/branches/save', data);
+      if (!r.ok) { document.getElementById('branch-alert').innerHTML=`<div class="alert alert-error">⚠ ${r.data.error}</div>`; return false; }
+      showToast('success', `Branch ${isEdit ? 'updated' : 'added'} successfully`);
+      await loadBranches(); return true;
+    });
+}
+
+async function useMyLocation() {
+  const loc = await getLocation();
+  if (!loc) { showToast('error', 'Could not get your location'); return; }
+  document.getElementById('br-lat').value = loc.lat.toFixed(6);
+  document.getElementById('br-lon').value = loc.lon.toFixed(6);
+  showToast('success', `Location set: ${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}`);
+}
+
+async function deleteBranch(id, name) {
+  if (!confirm(`Delete branch "${name}"? This cannot be undone.`)) return;
+  const r = await api('POST', '/branches/delete', { id });
+  if (r.ok) { showToast('success', 'Branch deleted'); await loadBranches(); }
+  else showToast('error', r.data.error);
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function renderSettings() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `<div class="page-header"><h1>⚙️ Settings</h1><p>Email notifications and system configuration</p></div><div id="settings-content">Loading…</div>`;
+  const r = await api('GET', '/settings');
+  const s = r.data;
+  document.getElementById('settings-content').innerHTML = `
+    <div class="grid-2">
+      <div>
+        <div class="card mb-4">
+          <div class="card-header"><h3>📧 Email Notifications</h3></div>
+          <div class="card-body">
+            <div id="smtp-alert"></div>
+            <div class="form-group" style="margin-bottom:16px">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                <input type="checkbox" id="s-email-on" ${s.email_enabled==='1'?'checked':''} style="width:18px;height:18px;accent-color:var(--blue)"/>
+                <span style="font-weight:600;font-size:14px">Enable email notifications</span>
+              </label>
+              <p class="text-sm text-muted" style="margin-top:4px;margin-left:28px">Supervisors receive email when an employee submits a leave request.</p>
+            </div>
+            <div class="form-group"><label>Gmail Address</label><input id="s-smtp-user" value="${s.smtp_user||''}" placeholder="yourapp@gmail.com"/></div>
+            <div class="form-group"><label>Gmail App Password <a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--blue);font-weight:400;margin-left:6px">Get one here →</a></label>
+              <input id="s-smtp-pass" type="password" placeholder="Leave blank to keep current"/></div>
+            <div class="form-group"><label>Display Name (From)</label><input id="s-smtp-from" value="${s.smtp_from||''}" placeholder="OnTime Notifications"/></div>
+            <div class="form-group"><label>App Base URL (for links in emails)</label><input id="s-base-url" value="${s.base_url||'http://localhost:5000'}" placeholder="https://yourapp.com"/></div>
+            <div class="flex gap-2">
+              <button class="btn btn-primary" onclick="saveSmtpSettings()">Save Email Settings</button>
+              <button class="btn btn-ghost" onclick="testEmail()">Send Test Email</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card mb-4">
+          <div class="card-header"><h3>📍 Geofencing</h3></div>
+          <div class="card-body">
+            <div class="form-group" style="margin-bottom:12px">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                <input type="checkbox" id="s-geo-on" ${s.geofence_enabled==='1'?'checked':''} style="width:18px;height:18px;accent-color:var(--blue)"/>
+                <span style="font-weight:600;font-size:14px">Enable geofencing</span>
+              </label>
+              <p class="text-sm text-muted" style="margin-top:4px;margin-left:28px">Employees must be within branch radius to punch in/out.</p>
+            </div>
+            <button class="btn btn-primary" onclick="saveGeoSettings()">Save</button>
+            <div style="margin-top:16px" class="alert alert-info text-sm">Manage branch locations and radius from <button class="link-btn" onclick="navigate('branches')">Branches & Geofence →</button></div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveSmtpSettings() {
+  const data = {
+    email_enabled: document.getElementById('s-email-on').checked ? '1' : '0',
+    smtp_user:  document.getElementById('s-smtp-user').value.trim(),
+    smtp_pass:  document.getElementById('s-smtp-pass').value,
+    smtp_from:  document.getElementById('s-smtp-from').value.trim(),
+    base_url:   document.getElementById('s-base-url').value.trim(),
+    smtp_host: 'smtp.gmail.com', smtp_port: '587',
+  };
+  const r = await api('POST', '/settings/save', data);
+  if (r.ok) showToast('success', 'Email settings saved');
+  else showToast('error', r.data.error);
+}
+
+async function saveGeoSettings() {
+  const data = { geofence_enabled: document.getElementById('s-geo-on').checked ? '1' : '0' };
+  const r = await api('POST', '/settings/save', data);
+  if (r.ok) showToast('success', 'Geofence setting saved');
+  else showToast('error', r.data.error);
+}
+
+async function testEmail() {
+  const to = prompt('Send test email to:');
+  if (!to) return;
+  const r = await api('POST', '/settings/test-email', { to });
+  if (r.ok && r.data.ok) showToast('success', 'Test email sent!');
+  else showToast('error', r.data.message || 'Failed to send');
+}
+
+// ── Modal helper ──────────────────────────────────────────────────────────────
+function showModal(title, bodyHtml, onConfirm, sizeClass='') {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal ${sizeClass}">
+      <div class="modal-header">
+        <h3>${title}</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">${bodyHtml}</div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="modal-confirm">Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => document.body.removeChild(overlay);
+  overlay.querySelector('#modal-close-btn').onclick = close;
+  overlay.querySelector('#modal-cancel').onclick = close;
+  overlay.querySelector('#modal-confirm').onclick = async () => {
+    const btn = overlay.querySelector('#modal-confirm');
+    btn.innerHTML = '<span class="spinner"></span>';
+    btn.disabled = true;
+    const ok = await onConfirm();
+    if (ok !== false) close();
+    else { btn.innerHTML = 'Confirm'; btn.disabled = false; }
+  };
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+}
+
+// Format leave dates — show individual dates if available, otherwise show range
+function formatLeaveDates(r) {
+  if (r.dates_json) {
+    const dates = JSON.parse(r.dates_json);
+    if (dates.length === 1) {
+      return `<span class="font-mono">${dates[0]}</span>`;
+    }
+    // Group consecutive dates into ranges for compact display
+    const groups = [];
+    let rangeStart = dates[0], rangePrev = dates[0];
+    for (let i = 1; i < dates.length; i++) {
+      const cur  = dates[i];
+      const prev = new Date(rangePrev);
+      // Check if cur is the next weekday after prev (skip weekends)
+      let next = new Date(prev); next.setDate(next.getDate() + 1);
+      while (next.getDay() === 0 || next.getDay() === 6) next.setDate(next.getDate() + 1);
+      if (cur === next.toISOString().slice(0,10)) {
+        rangePrev = cur; // extend current group
+      } else {
+        groups.push(rangeStart === rangePrev ? rangeStart : `${rangeStart} → ${rangePrev}`);
+        rangeStart = rangePrev = cur;
+      }
+    }
+    groups.push(rangeStart === rangePrev ? rangeStart : `${rangeStart} → ${rangePrev}`);
+    return groups.map(g => `<span class="font-mono" style="display:block;white-space:nowrap">${g}</span>`).join('');
+  }
+  // Legacy: no dates_json, show range
+  return `<span class="font-mono">${r.start_date}${r.end_date !== r.start_date ? ' → '+r.end_date : ''}</span>`;
+}
+
+// ── Toast notifications ───────────────────────────────────────────────────────
+function showToast(type, message) {
+  const existing = document.getElementById('wp-toast');
+  if (existing) existing.remove();
+  const t = document.createElement('div');
+  t.id = 'wp-toast';
+  const bg = type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#2563eb';
+  t.style.cssText = `position:fixed;bottom:28px;right:28px;background:${bg};color:white;padding:14px 20px;border-radius:10px;font-size:14px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.2);z-index:9999;max-width:360px;animation:slideUp .2s ease`;
+  t.textContent = message;
+  document.body.appendChild(t);
+  setTimeout(() => t.style.opacity='0', 3200);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+}
+
+function formatDate(d) {
+  return d.toLocaleDateString('en-US', { weekday:'short', year:'numeric', month:'short', day:'numeric' });
+}
+
+function dayName(dateStr) {
+  return new Date(dateStr).toLocaleDateString('en-US', { weekday:'short' });
+}
+
+function isWeekday() {
+  const d = new Date().getDay();
+  return d > 0 && d < 6;
+}
+
+function calcDuration(pin, pout) {
+  const [ph,pm] = pin.split(':').map(Number);
+  const [oh,om] = pout.split(':').map(Number);
+  const mins = (oh*60+om) - (ph*60+pm);
+  if (mins < 0) return '—';
+  return `${Math.floor(mins/60)}h ${mins%60}m`;
+}
+
+function statusBadge(status) {
+  const map = { ontime:'✅', late:'⏰', absent:'❌', leave:'🏖', pending:'⏳', approved:'✅', rejected:'❌', approvedd:'✅', rejectedd:'❌' };
+  return map[status] || status;
+}
+
+function badgeHtml(status) {
+  const map = {
+    ontime:   ['badge-green',  'On-time'],
+    late:     ['badge-yellow', 'Late'],
+    absent:   ['badge-red',    'Absent'],
+    leave:    ['badge-purple', 'On Leave'],
+    pending:  ['badge-yellow', 'Pending'],
+    approved: ['badge-green',  'Approved'],
+    approvedd:['badge-green',  'Approved'],
+    rejected: ['badge-red',    'Rejected'],
+    rejectedd:['badge-red',    'Rejected'],
+  };
+  const [cls, label] = map[status] || ['badge-grey', status];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function roleBadge(role) {
+  const map = { employee: ['badge-blue','Employee'], manager: ['badge-green','Manager'], hr_admin: ['badge-purple','HR Admin'] };
+  const [cls, label] = map[role] || ['badge-grey', role];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+render();
+
+// ── Reports Page ──────────────────────────────────────────────────────────────
+async function renderReports() {
+  const el   = document.getElementById('page-content');
+  const role = state.user.role;
+  const isManager = role === 'manager' || role === 'hr_admin';
+  const thisMonth  = new Date().toISOString().slice(0,7);
+
+  el.innerHTML = `
+    <div class="page-header">
+      <h1>📊 Reports</h1>
+      <p>Download attendance and leave reports as PDF or Excel</p>
+    </div>
+
+    <!-- My Report (all roles) -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>👤 My Attendance & Leave Report</h3>
+        <span class="text-sm text-muted">PDF only</span>
+      </div>
+      <div class="card-body">
+        <div class="flex gap-3 items-center" style="flex-wrap:wrap">
+          <div class="form-group" style="margin:0">
+            <label style="font-size:12px;font-weight:600;color:var(--text-s);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Month</label>
+            <input type="month" id="my-month" value="${thisMonth}" style="padding:9px 14px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px"/>
+          </div>
+          <button class="btn btn-primary" style="margin-top:18px" onclick="downloadMyPDF()">
+            📄 Download PDF
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Team / Company Report (manager + HR) -->
+    ${isManager ? `
+    <div class="card">
+      <div class="card-header">
+        <h3>${role === 'hr_admin' ? '🏢 Company' : '👥 Department'} Attendance & Leave Report</h3>
+        <div class="flex gap-2">
+          <span class="badge badge-blue">Excel</span>
+          <span class="badge badge-green">PDF</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="flex gap-3 items-center" style="flex-wrap:wrap;margin-bottom:20px">
+          <div class="form-group" style="margin:0">
+            <label style="font-size:12px;font-weight:600;color:var(--text-s);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Month</label>
+            <input type="month" id="team-month" value="${thisMonth}" style="padding:9px 14px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px"/>
+          </div>
+          ${role === 'hr_admin' ? `
+          <div class="form-group" style="margin:0">
+            <label style="font-size:12px;font-weight:600;color:var(--text-s);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Department</label>
+            <select id="team-dept" style="padding:9px 14px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px">
+              <option value="">All Departments</option>
+            </select>
+          </div>` : ''}
+          <div class="form-group" style="margin:0">
+            <label style="font-size:12px;font-weight:600;color:var(--text-s);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Report Type</label>
+            <select id="team-type" style="padding:9px 14px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px">
+              <option value="attendance">Attendance Only</option>
+              <option value="leave">Leave Only</option>
+              <option value="both" selected>Attendance + Leave</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex gap-2" style="flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="downloadTeamExcel()">📊 Download Excel</button>
+          <button class="btn btn-outline" onclick="downloadTeamPDF()">📄 Download PDF</button>
+        </div>
+      </div>
+    </div>` : ''}`;
+
+  // Load departments for HR filter
+  if (role === 'hr_admin') {
+    const r = await api('GET', `/reports/team-attendance?month=${thisMonth}`);
+    if (r.ok && r.data.departments) {
+      const sel = document.getElementById('team-dept');
+      if (sel) r.data.departments.forEach(d => {
+        const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o);
+      });
+    }
+  }
+}
+
+// ── My PDF ────────────────────────────────────────────────────────────────────
+async function downloadMyPDF() {
+  const month = document.getElementById('my-month').value;
+  showToast('success', 'Preparing your report…');
+  const r = await api('GET', `/reports/my-attendance?month=${month}`);
+  if (!r.ok) { showToast('error', 'Failed to load data'); return; }
+  const { attendance, leaves } = r.data;
+  const [year, mon] = month.split('-');
+  const monthName = new Date(year, mon-1).toLocaleString('en-US',{month:'long',year:'numeric'});
+
+  const attRows = attendance.map(a => {
+    const dur = a.punch_in && a.punch_out ? calcDuration(a.punch_in, a.punch_out) : '—';
+    return `<tr>
+      <td>${a.date}</td><td>${dayName(a.date)}</td>
+      <td>${a.punch_in ? a.punch_in.slice(0,5) : '—'}</td>
+      <td>${a.punch_out ? a.punch_out.slice(0,5) : '—'}</td>
+      <td>${dur}</td>
+      <td><span class="s-${a.status}">${capFirst(a.status)}</span></td>
+      <td style="font-size:11px;color:#64748b">${a.geo_in||''}</td>
+    </tr>`;
+  }).join('');
+
+  const leaveRows = leaves.map(l => `<tr>
+    <td>${formatLeaveDates(l)}</td>
+    <td>${l.leave_name}</td><td>${l.days}d</td>
+    <td><span class="s-${l.status}">${capFirst(l.status)}</span></span></td>
+    <td>${l.reason||'—'}</td>
+  </tr>`).join('');
+
+  // Summary
+  const ontime = attendance.filter(a=>a.status==='ontime').length;
+  const late   = attendance.filter(a=>a.status==='late').length;
+  const absent = attendance.filter(a=>a.status==='absent').length;
+  const leave  = attendance.filter(a=>a.status==='leave').length;
+
+  printHTML(reportStyles() + `
+    <div class="rpt-header">
+      <div class="rpt-logo">⏱ OnTime</div>
+      <h1>Attendance & Leave Report</h1>
+      <p>${state.user.name} · ${state.user.employee_id} · ${state.user.department||''}</p>
+      <p class="period">${monthName}</p>
+    </div>
+    <div class="summary-grid">
+      <div class="sum-card green"><div class="sum-num">${ontime}</div><div class="sum-lbl">On-time</div></div>
+      <div class="sum-card yellow"><div class="sum-num">${late}</div><div class="sum-lbl">Late</div></div>
+      <div class="sum-card red"><div class="sum-num">${absent}</div><div class="sum-lbl">Absent</div></div>
+      <div class="sum-card purple"><div class="sum-num">${leave}</div><div class="sum-lbl">On Leave</div></div>
+    </div>
+    <h2>Attendance Records</h2>
+    <table><thead><tr><th>Date</th><th>Day</th><th>Clock In</th><th>Clock Out</th><th>Duration</th><th>Status</th><th>Location</th></tr></thead>
+    <tbody>${attRows || '<tr><td colspan="7" style="text-align:center;color:#94a3b8">No records</td></tr>'}</tbody></table>
+    ${leaves.length ? `
+    <h2 style="margin-top:24px">Leave Requests</h2>
+    <table><thead><tr><th>Dates</th><th>Type</th><th>Days</th><th>Status</th><th>Reason</th></tr></thead>
+    <tbody>${leaveRows}</tbody></table>` : ''}
+    <div class="rpt-footer">Generated by OnTime · ${new Date().toLocaleDateString()}</div>
+  `);
+}
+
+// ── Team Excel ────────────────────────────────────────────────────────────────
+async function downloadTeamExcel() {
+  const {month, dept, type, data} = await fetchTeamData();
+  if (!data) return;
+  const { attendance, leaves } = data;
+  const [year, mon] = month.split('-');
+  const monthName = new Date(year, mon-1).toLocaleString('en-US',{month:'long',year:'numeric'});
+
+  // Build workbook using SheetJS
+  const XLSX = await loadSheetJS();
+  if (!XLSX) return;
+
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: Attendance
+  if (type !== 'leave') {
+    const attData = [
+      ['Employee','ID','Department','Shift','Date','Day','Clock In','Clock Out','Duration','Status','Location']
+    ];
+    attendance.forEach(a => {
+      const dur = a.punch_in && a.punch_out ? calcDuration(a.punch_in, a.punch_out) : '';
+      attData.push([
+        a.name, a.employee_id, a.department||'',
+        `${a.shift_start}–${a.shift_end}`,
+        a.date, dayName(a.date),
+        a.punch_in ? a.punch_in.slice(0,5) : '',
+        a.punch_out ? a.punch_out.slice(0,5) : '',
+        dur, capFirst(a.status||''), a.geo_in||''
+      ]);
+    });
+    const ws1 = XLSX.utils.aoa_to_sheet(attData);
+    ws1['!cols'] = [18,10,14,10,12,6,10,10,10,10,20].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws1, 'Attendance');
+  }
+
+  // Sheet 2: Leave
+  if (type !== 'attendance') {
+    const leaveData = [
+      ['Employee','ID','Department','Leave Type','Start Date','End Date','Days','Status','Reason']
+    ];
+    leaves.forEach(l => {
+      leaveData.push([
+        l.name, l.employee_id, l.department||'',
+        l.leave_name, l.start_date, l.end_date,
+        l.days, capFirst(l.status||''), l.reason||''
+      ]);
+    });
+    const ws2 = XLSX.utils.aoa_to_sheet(leaveData);
+    ws2['!cols'] = [18,10,14,16,12,12,6,10,30].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws2, 'Leave Requests');
+  }
+
+  // Summary sheet
+  const empMap = {};
+  attendance.forEach(a => {
+    if (!empMap[a.employee_id]) empMap[a.employee_id] = {name:a.name,dept:a.department||'',ontime:0,late:0,absent:0,leave:0,total:0};
+    if (a.status === 'ontime') empMap[a.employee_id].ontime++;
+    else if (a.status === 'late') empMap[a.employee_id].late++;
+    else if (a.status === 'absent') empMap[a.employee_id].absent++;
+    else if (a.status === 'leave') empMap[a.employee_id].leave++;
+    empMap[a.employee_id].total++;
+  });
+  const sumData = [['Employee','ID','Department','On-time','Late','Absent','On Leave','Total Days']];
+  Object.entries(empMap).forEach(([id,e]) => sumData.push([e.name,id,e.dept,e.ontime,e.late,e.absent,e.leave,e.total]));
+  const ws3 = XLSX.utils.aoa_to_sheet(sumData);
+  ws3['!cols'] = [18,10,14,10,8,8,10,10].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws3, 'Summary');
+
+  const fname = `OnTime_${dept||'Company'}_${month}.xlsx`;
+  XLSX.writeFile(wb, fname);
+  showToast('success', `Excel downloaded: ${fname}`);
+}
+
+// ── Team PDF ──────────────────────────────────────────────────────────────────
+async function downloadTeamPDF() {
+  const {month, dept, type, data} = await fetchTeamData();
+  if (!data) return;
+  const { attendance, leaves } = data;
+  const [year, mon] = month.split('-');
+  const monthName = new Date(year, mon-1).toLocaleString('en-US',{month:'long',year:'numeric'});
+  const scope = dept || (state.user.role==='hr_admin' ? 'All Departments' : 'My Department');
+
+  // Group by employee for summary
+  const empMap = {};
+  attendance.forEach(a => {
+    if (!empMap[a.employee_id]) empMap[a.employee_id]={name:a.name,dept:a.department||'',ontime:0,late:0,absent:0,leave:0};
+    if (a.status==='ontime') empMap[a.employee_id].ontime++;
+    else if (a.status==='late') empMap[a.employee_id].late++;
+    else if (a.status==='absent') empMap[a.employee_id].absent++;
+    else if (a.status==='leave') empMap[a.employee_id].leave++;
+  });
+
+  const summaryRows = Object.entries(empMap).map(([id,e]) =>
+    `<tr><td>${e.name}</td><td class="mono">${id}</td><td>${e.dept}</td>
+    <td class="c green">${e.ontime}</td><td class="c yellow">${e.late}</td>
+    <td class="c red">${e.absent}</td><td class="c purple">${e.leave}</td></tr>`
+  ).join('');
+
+  const attRows = type !== 'leave' ? attendance.map(a =>
+    `<tr><td>${a.name}</td><td class="mono">${a.employee_id}</td><td>${a.department||''}</td>
+    <td class="mono">${a.date}</td><td>${dayName(a.date)}</td>
+    <td class="mono">${a.punch_in?a.punch_in.slice(0,5):'—'}</td>
+    <td class="mono">${a.punch_out?a.punch_out.slice(0,5):'—'}</td>
+    <td><span class="s-${a.status}">${capFirst(a.status||'')}</span></td></tr>`
+  ).join('') : '';
+
+  const leaveRows = type !== 'attendance' ? leaves.map(l =>
+    `<tr><td>${l.name}</td><td class="mono">${l.employee_id}</td><td>${l.department||''}</td>
+    <td>${l.leave_name}</td><td class="mono">${l.start_date}</td>
+    <td class="c">${l.days}d</td>
+    <td><span class="s-${l.status}">${capFirst(l.status||'')}</span></td>
+    <td>${l.reason||'—'}</td></tr>`
+  ).join('') : '';
+
+  printHTML(reportStyles() + `
+    <div class="rpt-header">
+      <div class="rpt-logo">⏱ OnTime</div>
+      <h1>Attendance & Leave Report</h1>
+      <p>${scope}</p>
+      <p class="period">${monthName}</p>
+    </div>
+    <h2>Summary by Employee</h2>
+    <table><thead><tr><th>Employee</th><th>ID</th><th>Department</th><th>On-time</th><th>Late</th><th>Absent</th><th>On Leave</th></tr></thead>
+    <tbody>${summaryRows||'<tr><td colspan="7" style="text-align:center;color:#94a3b8">No data</td></tr>'}</tbody></table>
+    ${type !== 'leave' ? `
+    <h2 style="margin-top:24px">Attendance Detail</h2>
+    <table><thead><tr><th>Employee</th><th>ID</th><th>Dept</th><th>Date</th><th>Day</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
+    <tbody>${attRows||'<tr><td colspan="8" style="text-align:center;color:#94a3b8">No records</td></tr>'}</tbody></table>` : ''}
+    ${type !== 'attendance' && leaves.length ? `
+    <h2 style="margin-top:24px">Leave Requests</h2>
+    <table><thead><tr><th>Employee</th><th>ID</th><th>Dept</th><th>Leave Type</th><th>Start</th><th>Days</th><th>Status</th><th>Reason</th></tr></thead>
+    <tbody>${leaveRows}</tbody></table>` : ''}
+    <div class="rpt-footer">Generated by OnTime · ${new Date().toLocaleDateString()} · ${state.user.name}</div>
+  `);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+async function fetchTeamData() {
+  const month = document.getElementById('team-month')?.value || new Date().toISOString().slice(0,7);
+  const dept  = document.getElementById('team-dept')?.value  || '';
+  const type  = document.getElementById('team-type')?.value  || 'both';
+  showToast('success', 'Loading report data…');
+  const r = await api('GET', `/reports/team-attendance?month=${month}&dept=${encodeURIComponent(dept)}`);
+  if (!r.ok) { showToast('error', 'Failed to load data'); return {month,dept,type,data:null}; }
+  return {month, dept, type, data: r.data};
+}
+
+async function loadSheetJS() {
+  if (window.XLSX) return window.XLSX;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload  = () => resolve(window.XLSX);
+    s.onerror = () => { showToast('error','Failed to load Excel library'); reject(); };
+    document.head.appendChild(s);
+  });
+}
+
+function printHTML(html) {
+  const win = window.open('', '_blank', 'width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <title>OnTime Report</title></head><body>${html}</body></html>`);
+  win.document.close();
+  setTimeout(() => { win.focus(); win.print(); }, 400);
+}
+
+function reportStyles() {
+  return `<style>
+    * { margin:0;padding:0;box-sizing:border-box; }
+    body { font-family:'Segoe UI',sans-serif;font-size:12px;color:#1e293b;padding:24px; }
+    .rpt-header { text-align:center;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #e2e8f0; }
+    .rpt-logo { font-size:20px;font-weight:800;color:#2563eb;margin-bottom:6px; }
+    h1 { font-size:18px;font-weight:700;color:#0f172a;margin-bottom:4px; }
+    .rpt-header p { color:#64748b;font-size:12px; }
+    .period { font-size:14px;font-weight:600;color:#334155;margin-top:4px; }
+    h2 { font-size:13px;font-weight:700;color:#0f1f3d;margin-bottom:8px;padding:6px 0;border-bottom:1px solid #e2e8f0; }
+    table { width:100%;border-collapse:collapse;margin-bottom:4px;font-size:11px; }
+    th { background:#f1f5f9;padding:6px 8px;text-align:left;font-weight:700;color:#475569;font-size:10px;text-transform:uppercase;letter-spacing:.04em; }
+    td { padding:5px 8px;border-bottom:1px solid #f1f5f9;color:#334155; }
+    tr:nth-child(even) td { background:#fafbfc; }
+    .mono { font-family:monospace;font-size:11px; }
+    .c { text-align:center; }
+    .summary-grid { display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px; }
+    .sum-card { text-align:center;padding:12px;border-radius:8px;border:1px solid #e2e8f0; }
+    .sum-num { font-size:22px;font-weight:800; }
+    .sum-lbl { font-size:11px;color:#64748b;margin-top:2px; }
+    .green { background:#f0fdf4; } .green .sum-num { color:#16a34a; }
+    .yellow { background:#fffbeb; } .yellow .sum-num { color:#d97706; }
+    .red { background:#fef2f2; } .red .sum-num { color:#dc2626; }
+    .purple { background:#f5f3ff; } .purple .sum-num { color:#7c3aed; }
+    .s-ontime,.s-approved,.s-approvedd { color:#16a34a;font-weight:600; }
+    .s-late,.s-pending { color:#d97706;font-weight:600; }
+    .s-absent,.s-rejected,.s-rejectedd { color:#dc2626;font-weight:600; }
+    .s-leave { color:#7c3aed;font-weight:600; }
+    .rpt-footer { text-align:center;margin-top:20px;padding-top:12px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px; }
+    @media print {
+      body { padding:12px; }
+      @page { margin:1cm; size:A4 landscape; }
+    }
+  </style>`;
+}
+
+function capFirst(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
