@@ -409,6 +409,7 @@ const _ot = {
   // Phase: 'regular' = before/at shift end, 'overtime' = user confirmed OT
   phase:       'regular',
   alertShown:  false,   // current warning modal visible
+  dismissed:   false,   // user clicked No — never re-show same warning
   plannedOut:  null,    // HH:MM — only set when user confirms overtime
   reportSent:  false,   // missing-checkout email sent
 };
@@ -439,7 +440,7 @@ async function checkOvertimeAlert() {
   if (_ot.phase === 'regular') {
     const warnAt = shiftEnd - 15;
     // Show shift-end warning 15 min before (ask if doing OT)
-    if (now >= warnAt && now < shiftEnd && !_ot.alertShown) {
+    if (now >= warnAt && now < shiftEnd && !_ot.alertShown && !_ot.dismissed) {
       _ot.alertShown = true;
       showShiftEndModal(shiftEnd);
       return;
@@ -472,7 +473,7 @@ async function checkOvertimeAlert() {
     }
 
     // Show warning 15 min before OT end
-    if (now >= warnAt && now < plannedMins && !_ot.alertShown) {
+    if (now >= warnAt && now < plannedMins && !_ot.alertShown && !_ot.dismissed) {
       _ot.alertShown = true;
       showOvertimeModal(plannedMins);
     }
@@ -515,9 +516,10 @@ function showShiftEndModal(shiftEndMins) {
   document.body.appendChild(overlay);
 
   document.getElementById('se-no-btn').onclick = async () => {
-    // User confirms leaving — close modal, auto-checkout fires at shift end naturally
+    // User confirms leaving — close modal, mark dismissed so it never re-shows
     overlay.remove();
     _ot.alertShown = false;
+    _ot.dismissed  = true;
     // Schedule silent auto-checkout at exact shift end
     const minsLeft = shiftEndMins - _nowMins();
     if (minsLeft <= 0) {
@@ -599,6 +601,7 @@ async function handleOvertimeNo(plannedStr) {
   const overlay = document.getElementById('ot-overlay');
   if (overlay) overlay.remove();
   _ot.alertShown = false;
+  _ot.dismissed  = true;   // don't re-show — user already responded
   // User responded — auto clock-out silently, no supervisor report needed
   await performAutoCheckout(plannedStr + ':00', false);
 }
@@ -611,6 +614,7 @@ async function handleOvertimeYes(currentPlannedMins) {
   await api('POST', '/overtime/set', { planned_checkout: newStr });
   _ot.plannedOut  = newStr;
   _ot.alertShown  = false;
+  _ot.dismissed   = false;   // reset — new warning cycle for the OT period
   _ot.phase       = 'overtime';   // now in overtime phase — supervisor notified if missed
   const overlay = document.getElementById('ot-overlay');
   if (overlay) overlay.remove();
