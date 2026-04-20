@@ -36,7 +36,7 @@ function renderLogin() {
     <div class="auth-hero">
       <div class="hero-logo">
         <div class="hero-logo-icon">⏱</div>
-        <div class="hero-logo-text">WorkPulse</div>
+        <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Track time.<br>Manage leave.<br><span>Stay in sync.</span></h1>
       <p class="hero-sub">A modern attendance & leave management system built for teams of every size.</p>
@@ -102,7 +102,7 @@ function renderForgot() {
     <div class="auth-hero">
       <div class="hero-logo">
         <div class="hero-logo-icon">⏱</div>
-        <div class="hero-logo-text">WorkPulse</div>
+        <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Reset your<br><span>password</span></h1>
       <p class="hero-sub">Enter your work email and we'll send you a reset link.</p>
@@ -136,7 +136,7 @@ function renderReset() {
   document.getElementById('app').innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
-      <div class="hero-logo"><div class="hero-logo-icon">⏱</div><div class="hero-logo-text">WorkPulse</div></div>
+      <div class="hero-logo"><div class="hero-logo-icon">⏱</div><div class="hero-logo-text">OnTime</div></div>
       <h1 class="hero-title">Set new<br><span>password</span></h1>
     </div>
     <div class="auth-panel">
@@ -176,7 +176,7 @@ function renderShell() {
     <aside class="sidebar">
       <div class="sidebar-logo">
         <div class="sidebar-logo-icon">⏱</div>
-        <div class="sidebar-logo-text">WorkPulse <span>Attendance & Leave</span></div>
+        <div class="sidebar-logo-text">OnTime <span>Attendance & Leave</span></div>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-section-label">Main</div>
@@ -409,6 +409,7 @@ const _ot = {
   // Phase: 'regular' = before/at shift end, 'overtime' = user confirmed OT
   phase:       'regular',
   alertShown:  false,   // current warning modal visible
+  dismissed:   false,   // user clicked No — never re-show same warning
   plannedOut:  null,    // HH:MM — only set when user confirms overtime
   reportSent:  false,   // missing-checkout email sent
 };
@@ -439,7 +440,7 @@ async function checkOvertimeAlert() {
   if (_ot.phase === 'regular') {
     const warnAt = shiftEnd - 15;
     // Show shift-end warning 15 min before (ask if doing OT)
-    if (now >= warnAt && now < shiftEnd && !_ot.alertShown) {
+    if (now >= warnAt && now < shiftEnd && !_ot.alertShown && !_ot.dismissed) {
       _ot.alertShown = true;
       showShiftEndModal(shiftEnd);
       return;
@@ -472,7 +473,7 @@ async function checkOvertimeAlert() {
     }
 
     // Show warning 15 min before OT end
-    if (now >= warnAt && now < plannedMins && !_ot.alertShown) {
+    if (now >= warnAt && now < plannedMins && !_ot.alertShown && !_ot.dismissed) {
       _ot.alertShown = true;
       showOvertimeModal(plannedMins);
     }
@@ -515,9 +516,10 @@ function showShiftEndModal(shiftEndMins) {
   document.body.appendChild(overlay);
 
   document.getElementById('se-no-btn').onclick = async () => {
-    // User confirms leaving — close modal, auto-checkout fires at shift end naturally
+    // User confirms leaving — close modal, mark dismissed so it never re-shows
     overlay.remove();
     _ot.alertShown = false;
+    _ot.dismissed  = true;
     // Schedule silent auto-checkout at exact shift end
     const minsLeft = shiftEndMins - _nowMins();
     if (minsLeft <= 0) {
@@ -599,6 +601,7 @@ async function handleOvertimeNo(plannedStr) {
   const overlay = document.getElementById('ot-overlay');
   if (overlay) overlay.remove();
   _ot.alertShown = false;
+  _ot.dismissed  = true;   // don't re-show — user already responded
   // User responded — auto clock-out silently, no supervisor report needed
   await performAutoCheckout(plannedStr + ':00', false);
 }
@@ -611,6 +614,7 @@ async function handleOvertimeYes(currentPlannedMins) {
   await api('POST', '/overtime/set', { planned_checkout: newStr });
   _ot.plannedOut  = newStr;
   _ot.alertShown  = false;
+  _ot.dismissed   = false;   // reset — new warning cycle for the OT period
   _ot.phase       = 'overtime';   // now in overtime phase — supervisor notified if missed
   const overlay = document.getElementById('ot-overlay');
   if (overlay) overlay.remove();
@@ -1357,7 +1361,7 @@ async function renderSettings() {
             <div class="form-group"><label>Gmail Address</label><input id="s-smtp-user" value="${s.smtp_user||''}" placeholder="yourapp@gmail.com"/></div>
             <div class="form-group"><label>Gmail App Password <a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--blue);font-weight:400;margin-left:6px">Get one here →</a></label>
               <input id="s-smtp-pass" type="password" placeholder="Leave blank to keep current"/></div>
-            <div class="form-group"><label>Display Name (From)</label><input id="s-smtp-from" value="${s.smtp_from||''}" placeholder="WorkPulse Notifications"/></div>
+            <div class="form-group"><label>Display Name (From)</label><input id="s-smtp-from" value="${s.smtp_from||''}" placeholder="OnTime Notifications"/></div>
             <div class="form-group"><label>App Base URL (for links in emails)</label><input id="s-base-url" value="${s.base_url||'http://localhost:5000'}" placeholder="https://yourapp.com"/></div>
             <div class="flex gap-2">
               <button class="btn btn-primary" onclick="saveSmtpSettings()">Save Email Settings</button>
@@ -1667,7 +1671,7 @@ async function downloadMyPDF() {
 
   printHTML(reportStyles() + `
     <div class="rpt-header">
-      <div class="rpt-logo">⏱ WorkPulse</div>
+      <div class="rpt-logo">⏱ OnTime</div>
       <h1>Attendance & Leave Report</h1>
       <p>${state.user.name} · ${state.user.employee_id} · ${state.user.department||''}</p>
       <p class="period">${monthName}</p>
@@ -1685,7 +1689,7 @@ async function downloadMyPDF() {
     <h2 style="margin-top:24px">Leave Requests</h2>
     <table><thead><tr><th>Dates</th><th>Type</th><th>Days</th><th>Status</th><th>Reason</th></tr></thead>
     <tbody>${leaveRows}</tbody></table>` : ''}
-    <div class="rpt-footer">Generated by WorkPulse · ${new Date().toLocaleDateString()}</div>
+    <div class="rpt-footer">Generated by OnTime · ${new Date().toLocaleDateString()}</div>
   `);
 }
 
@@ -1757,7 +1761,7 @@ async function downloadTeamExcel() {
   ws3['!cols'] = [18,10,14,10,8,8,10,10].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws3, 'Summary');
 
-  const fname = `WorkPulse_${dept||'Company'}_${month}.xlsx`;
+  const fname = `OnTime_${dept||'Company'}_${month}.xlsx`;
   XLSX.writeFile(wb, fname);
   showToast('success', `Excel downloaded: ${fname}`);
 }
@@ -1805,7 +1809,7 @@ async function downloadTeamPDF() {
 
   printHTML(reportStyles() + `
     <div class="rpt-header">
-      <div class="rpt-logo">⏱ WorkPulse</div>
+      <div class="rpt-logo">⏱ OnTime</div>
       <h1>Attendance & Leave Report</h1>
       <p>${scope}</p>
       <p class="period">${monthName}</p>
@@ -1821,7 +1825,7 @@ async function downloadTeamPDF() {
     <h2 style="margin-top:24px">Leave Requests</h2>
     <table><thead><tr><th>Employee</th><th>ID</th><th>Dept</th><th>Leave Type</th><th>Start</th><th>Days</th><th>Status</th><th>Reason</th></tr></thead>
     <tbody>${leaveRows}</tbody></table>` : ''}
-    <div class="rpt-footer">Generated by WorkPulse · ${new Date().toLocaleDateString()} · ${state.user.name}</div>
+    <div class="rpt-footer">Generated by OnTime · ${new Date().toLocaleDateString()} · ${state.user.name}</div>
   `);
 }
 
@@ -1850,7 +1854,7 @@ async function loadSheetJS() {
 function printHTML(html) {
   const win = window.open('', '_blank', 'width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-    <title>WorkPulse Report</title></head><body>${html}</body></html>`);
+    <title>OnTime Report</title></head><body>${html}</body></html>`);
   win.document.close();
   setTimeout(() => { win.focus(); win.print(); }, 400);
 }
