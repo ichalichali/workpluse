@@ -756,3 +756,83 @@ except Exception as e:
 
 if __name__=='__main__':
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT',5000)))
+
+# ── Reports API ───────────────────────────────────────────────────────────────
+@app.route('/api/reports/my-attendance')
+def report_my_attendance():
+    err = require_login()
+    if err: return err
+    uid   = session['user_id']
+    month = request.args.get('month', today_local().strftime('%Y-%m'))
+    conn  = get_db(); c = conn.cursor()
+    c.execute(
+        "SELECT u.name,u.employee_id,u.department,u.shift_start,u.shift_end,"
+        "a.date,a.punch_in,a.punch_out,a.status,a.geo_in,a.geo_out "
+        "FROM attendance a JOIN users u ON a.user_id=u.id "
+        "WHERE a.user_id=%s AND a.date LIKE %s ORDER BY a.date",
+        (uid, f"{month}%"))
+    att = c.fetchall()
+    c.execute(
+        "SELECT lr.*,lt.name as leave_name "
+        "FROM leave_requests lr JOIN leave_types lt ON lr.leave_type_id=lt.id "
+        "WHERE lr.user_id=%s AND lr.start_date LIKE %s ORDER BY lr.start_date",
+        (uid, f"{month}%"))
+    leaves = c.fetchall()
+    conn.close()
+    return jsonify({'attendance':[dict(r) for r in att],'leaves':[dict(r) for r in leaves]})
+
+@app.route('/api/reports/team-attendance')
+def report_team_attendance():
+    err = require_login()
+    if err: return err
+    uid  = session['user_id']
+    role = session['role']
+    if role not in ('manager','hr_admin'): return jsonify({'error':'Forbidden'}),403
+    month = request.args.get('month', today_local().strftime('%Y-%m'))
+    dept  = request.args.get('dept','')
+    conn  = get_db(); c = conn.cursor()
+
+    # Attendance
+    if role == 'hr_admin':
+        base = ("SELECT u.name,u.employee_id,u.department,u.shift_start,u.shift_end,"
+                "a.date,a.punch_in,a.punch_out,a.status,a.geo_in "
+                "FROM attendance a JOIN users u ON a.user_id=u.id "
+                "WHERE a.date LIKE %s AND u.role!='hr_admin'")
+        if dept:
+            c.execute(base + " AND u.department=%s ORDER BY u.department,u.name,a.date", (f"{month}%",dept))
+        else:
+            c.execute(base + " ORDER BY u.department,u.name,a.date", (f"{month}%",))
+    else:
+        c.execute(
+            "SELECT u.name,u.employee_id,u.department,u.shift_start,u.shift_end,"
+            "a.date,a.punch_in,a.punch_out,a.status,a.geo_in "
+            "FROM attendance a JOIN users u ON a.user_id=u.id "
+            "WHERE a.date LIKE %s AND u.manager_id=%s ORDER BY u.name,a.date",
+            (f"{month}%", uid))
+    att_rows = c.fetchall()
+
+    # Leaves
+    if role == 'hr_admin':
+        base2 = ("SELECT u.name,u.employee_id,u.department,lr.start_date,lr.end_date,"
+                 "lr.days,lt.name as leave_name,lr.status,lr.reason "
+                 "FROM leave_requests lr JOIN users u ON lr.user_id=u.id "
+                 "JOIN leave_types lt ON lr.leave_type_id=lt.id "
+                 "WHERE lr.start_date LIKE %s")
+        if dept:
+            c.execute(base2 + " AND u.department=%s ORDER BY u.name,lr.start_date", (f"{month}%",dept))
+        else:
+            c.execute(base2 + " ORDER BY u.name,lr.start_date", (f"{month}%",))
+    else:
+        c.execute(
+            "SELECT u.name,u.employee_id,u.department,lr.start_date,lr.end_date,"
+            "lr.days,lt.name as leave_name,lr.status,lr.reason "
+            "FROM leave_requests lr JOIN users u ON lr.user_id=u.id "
+            "JOIN leave_types lt ON lr.leave_type_id=lt.id "
+            "WHERE lr.start_date LIKE %s AND u.manager_id=%s ORDER BY u.name,lr.start_date",
+            (f"{month}%", uid))
+    leave_rows = c.fetchall()
+
+    c.execute("SELECT DISTINCT department FROM users WHERE role!='hr_admin' AND department IS NOT NULL ORDER BY department")
+    depts = [r['department'] for r in c.fetchall()]
+    conn.close()
+    return jsonify({'attendance':[dict(r) for r in att_rows],'leaves':[dict(r) for r in leave_rows],'departments':depts})

@@ -189,6 +189,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='leave'?'active':''}" onclick="navigate('leave')">
           <span class="nav-icon">🏖</span> Leave
         </button>
+        <button class="nav-item ${state.page==='reports'?'active':''}" onclick="navigate('reports')">
+          <span class="nav-icon">📊</span> Reports
+        </button>
       </div>
       ${isManager ? `
       <div class="sidebar-section">
@@ -259,6 +262,7 @@ async function loadPage() {
     case 'employees':   return renderEmployees();
     case 'branches':    return renderBranches();
     case 'settings':    return renderSettings();
+    case 'reports':     return renderReports();
   }
 }
 
@@ -1542,3 +1546,349 @@ function roleBadge(role) {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 render();
+
+// ── Reports Page ──────────────────────────────────────────────────────────────
+async function renderReports() {
+  const el   = document.getElementById('page-content');
+  const role = state.user.role;
+  const isManager = role === 'manager' || role === 'hr_admin';
+  const thisMonth  = new Date().toISOString().slice(0,7);
+
+  el.innerHTML = `
+    <div class="page-header">
+      <h1>📊 Reports</h1>
+      <p>Download attendance and leave reports as PDF or Excel</p>
+    </div>
+
+    <!-- My Report (all roles) -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <h3>👤 My Attendance & Leave Report</h3>
+        <span class="text-sm text-muted">PDF only</span>
+      </div>
+      <div class="card-body">
+        <div class="flex gap-3 items-center" style="flex-wrap:wrap">
+          <div class="form-group" style="margin:0">
+            <label style="font-size:12px;font-weight:600;color:var(--text-s);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Month</label>
+            <input type="month" id="my-month" value="${thisMonth}" style="padding:9px 14px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px"/>
+          </div>
+          <button class="btn btn-primary" style="margin-top:18px" onclick="downloadMyPDF()">
+            📄 Download PDF
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Team / Company Report (manager + HR) -->
+    ${isManager ? `
+    <div class="card">
+      <div class="card-header">
+        <h3>${role === 'hr_admin' ? '🏢 Company' : '👥 Department'} Attendance & Leave Report</h3>
+        <div class="flex gap-2">
+          <span class="badge badge-blue">Excel</span>
+          <span class="badge badge-green">PDF</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="flex gap-3 items-center" style="flex-wrap:wrap;margin-bottom:20px">
+          <div class="form-group" style="margin:0">
+            <label style="font-size:12px;font-weight:600;color:var(--text-s);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Month</label>
+            <input type="month" id="team-month" value="${thisMonth}" style="padding:9px 14px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px"/>
+          </div>
+          ${role === 'hr_admin' ? `
+          <div class="form-group" style="margin:0">
+            <label style="font-size:12px;font-weight:600;color:var(--text-s);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Department</label>
+            <select id="team-dept" style="padding:9px 14px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px">
+              <option value="">All Departments</option>
+            </select>
+          </div>` : ''}
+          <div class="form-group" style="margin:0">
+            <label style="font-size:12px;font-weight:600;color:var(--text-s);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Report Type</label>
+            <select id="team-type" style="padding:9px 14px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Sans,sans-serif;font-size:14px">
+              <option value="attendance">Attendance Only</option>
+              <option value="leave">Leave Only</option>
+              <option value="both" selected>Attendance + Leave</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex gap-2" style="flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="downloadTeamExcel()">📊 Download Excel</button>
+          <button class="btn btn-outline" onclick="downloadTeamPDF()">📄 Download PDF</button>
+        </div>
+      </div>
+    </div>` : ''}`;
+
+  // Load departments for HR filter
+  if (role === 'hr_admin') {
+    const r = await api('GET', `/reports/team-attendance?month=${thisMonth}`);
+    if (r.ok && r.data.departments) {
+      const sel = document.getElementById('team-dept');
+      if (sel) r.data.departments.forEach(d => {
+        const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o);
+      });
+    }
+  }
+}
+
+// ── My PDF ────────────────────────────────────────────────────────────────────
+async function downloadMyPDF() {
+  const month = document.getElementById('my-month').value;
+  showToast('success', 'Preparing your report…');
+  const r = await api('GET', `/reports/my-attendance?month=${month}`);
+  if (!r.ok) { showToast('error', 'Failed to load data'); return; }
+  const { attendance, leaves } = r.data;
+  const [year, mon] = month.split('-');
+  const monthName = new Date(year, mon-1).toLocaleString('en-US',{month:'long',year:'numeric'});
+
+  const attRows = attendance.map(a => {
+    const dur = a.punch_in && a.punch_out ? calcDuration(a.punch_in, a.punch_out) : '—';
+    return `<tr>
+      <td>${a.date}</td><td>${dayName(a.date)}</td>
+      <td>${a.punch_in ? a.punch_in.slice(0,5) : '—'}</td>
+      <td>${a.punch_out ? a.punch_out.slice(0,5) : '—'}</td>
+      <td>${dur}</td>
+      <td><span class="s-${a.status}">${capFirst(a.status)}</span></td>
+      <td style="font-size:11px;color:#64748b">${a.geo_in||''}</td>
+    </tr>`;
+  }).join('');
+
+  const leaveRows = leaves.map(l => `<tr>
+    <td>${formatLeaveDates(l)}</td>
+    <td>${l.leave_name}</td><td>${l.days}d</td>
+    <td><span class="s-${l.status}">${capFirst(l.status)}</span></span></td>
+    <td>${l.reason||'—'}</td>
+  </tr>`).join('');
+
+  // Summary
+  const ontime = attendance.filter(a=>a.status==='ontime').length;
+  const late   = attendance.filter(a=>a.status==='late').length;
+  const absent = attendance.filter(a=>a.status==='absent').length;
+  const leave  = attendance.filter(a=>a.status==='leave').length;
+
+  printHTML(reportStyles() + `
+    <div class="rpt-header">
+      <div class="rpt-logo">⏱ WorkPulse</div>
+      <h1>Attendance & Leave Report</h1>
+      <p>${state.user.name} · ${state.user.employee_id} · ${state.user.department||''}</p>
+      <p class="period">${monthName}</p>
+    </div>
+    <div class="summary-grid">
+      <div class="sum-card green"><div class="sum-num">${ontime}</div><div class="sum-lbl">On-time</div></div>
+      <div class="sum-card yellow"><div class="sum-num">${late}</div><div class="sum-lbl">Late</div></div>
+      <div class="sum-card red"><div class="sum-num">${absent}</div><div class="sum-lbl">Absent</div></div>
+      <div class="sum-card purple"><div class="sum-num">${leave}</div><div class="sum-lbl">On Leave</div></div>
+    </div>
+    <h2>Attendance Records</h2>
+    <table><thead><tr><th>Date</th><th>Day</th><th>Clock In</th><th>Clock Out</th><th>Duration</th><th>Status</th><th>Location</th></tr></thead>
+    <tbody>${attRows || '<tr><td colspan="7" style="text-align:center;color:#94a3b8">No records</td></tr>'}</tbody></table>
+    ${leaves.length ? `
+    <h2 style="margin-top:24px">Leave Requests</h2>
+    <table><thead><tr><th>Dates</th><th>Type</th><th>Days</th><th>Status</th><th>Reason</th></tr></thead>
+    <tbody>${leaveRows}</tbody></table>` : ''}
+    <div class="rpt-footer">Generated by WorkPulse · ${new Date().toLocaleDateString()}</div>
+  `);
+}
+
+// ── Team Excel ────────────────────────────────────────────────────────────────
+async function downloadTeamExcel() {
+  const {month, dept, type, data} = await fetchTeamData();
+  if (!data) return;
+  const { attendance, leaves } = data;
+  const [year, mon] = month.split('-');
+  const monthName = new Date(year, mon-1).toLocaleString('en-US',{month:'long',year:'numeric'});
+
+  // Build workbook using SheetJS
+  const XLSX = await loadSheetJS();
+  if (!XLSX) return;
+
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: Attendance
+  if (type !== 'leave') {
+    const attData = [
+      ['Employee','ID','Department','Shift','Date','Day','Clock In','Clock Out','Duration','Status','Location']
+    ];
+    attendance.forEach(a => {
+      const dur = a.punch_in && a.punch_out ? calcDuration(a.punch_in, a.punch_out) : '';
+      attData.push([
+        a.name, a.employee_id, a.department||'',
+        `${a.shift_start}–${a.shift_end}`,
+        a.date, dayName(a.date),
+        a.punch_in ? a.punch_in.slice(0,5) : '',
+        a.punch_out ? a.punch_out.slice(0,5) : '',
+        dur, capFirst(a.status||''), a.geo_in||''
+      ]);
+    });
+    const ws1 = XLSX.utils.aoa_to_sheet(attData);
+    ws1['!cols'] = [18,10,14,10,12,6,10,10,10,10,20].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws1, 'Attendance');
+  }
+
+  // Sheet 2: Leave
+  if (type !== 'attendance') {
+    const leaveData = [
+      ['Employee','ID','Department','Leave Type','Start Date','End Date','Days','Status','Reason']
+    ];
+    leaves.forEach(l => {
+      leaveData.push([
+        l.name, l.employee_id, l.department||'',
+        l.leave_name, l.start_date, l.end_date,
+        l.days, capFirst(l.status||''), l.reason||''
+      ]);
+    });
+    const ws2 = XLSX.utils.aoa_to_sheet(leaveData);
+    ws2['!cols'] = [18,10,14,16,12,12,6,10,30].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws2, 'Leave Requests');
+  }
+
+  // Summary sheet
+  const empMap = {};
+  attendance.forEach(a => {
+    if (!empMap[a.employee_id]) empMap[a.employee_id] = {name:a.name,dept:a.department||'',ontime:0,late:0,absent:0,leave:0,total:0};
+    if (a.status === 'ontime') empMap[a.employee_id].ontime++;
+    else if (a.status === 'late') empMap[a.employee_id].late++;
+    else if (a.status === 'absent') empMap[a.employee_id].absent++;
+    else if (a.status === 'leave') empMap[a.employee_id].leave++;
+    empMap[a.employee_id].total++;
+  });
+  const sumData = [['Employee','ID','Department','On-time','Late','Absent','On Leave','Total Days']];
+  Object.entries(empMap).forEach(([id,e]) => sumData.push([e.name,id,e.dept,e.ontime,e.late,e.absent,e.leave,e.total]));
+  const ws3 = XLSX.utils.aoa_to_sheet(sumData);
+  ws3['!cols'] = [18,10,14,10,8,8,10,10].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws3, 'Summary');
+
+  const fname = `WorkPulse_${dept||'Company'}_${month}.xlsx`;
+  XLSX.writeFile(wb, fname);
+  showToast('success', `Excel downloaded: ${fname}`);
+}
+
+// ── Team PDF ──────────────────────────────────────────────────────────────────
+async function downloadTeamPDF() {
+  const {month, dept, type, data} = await fetchTeamData();
+  if (!data) return;
+  const { attendance, leaves } = data;
+  const [year, mon] = month.split('-');
+  const monthName = new Date(year, mon-1).toLocaleString('en-US',{month:'long',year:'numeric'});
+  const scope = dept || (state.user.role==='hr_admin' ? 'All Departments' : 'My Department');
+
+  // Group by employee for summary
+  const empMap = {};
+  attendance.forEach(a => {
+    if (!empMap[a.employee_id]) empMap[a.employee_id]={name:a.name,dept:a.department||'',ontime:0,late:0,absent:0,leave:0};
+    if (a.status==='ontime') empMap[a.employee_id].ontime++;
+    else if (a.status==='late') empMap[a.employee_id].late++;
+    else if (a.status==='absent') empMap[a.employee_id].absent++;
+    else if (a.status==='leave') empMap[a.employee_id].leave++;
+  });
+
+  const summaryRows = Object.entries(empMap).map(([id,e]) =>
+    `<tr><td>${e.name}</td><td class="mono">${id}</td><td>${e.dept}</td>
+    <td class="c green">${e.ontime}</td><td class="c yellow">${e.late}</td>
+    <td class="c red">${e.absent}</td><td class="c purple">${e.leave}</td></tr>`
+  ).join('');
+
+  const attRows = type !== 'leave' ? attendance.map(a =>
+    `<tr><td>${a.name}</td><td class="mono">${a.employee_id}</td><td>${a.department||''}</td>
+    <td class="mono">${a.date}</td><td>${dayName(a.date)}</td>
+    <td class="mono">${a.punch_in?a.punch_in.slice(0,5):'—'}</td>
+    <td class="mono">${a.punch_out?a.punch_out.slice(0,5):'—'}</td>
+    <td><span class="s-${a.status}">${capFirst(a.status||'')}</span></td></tr>`
+  ).join('') : '';
+
+  const leaveRows = type !== 'attendance' ? leaves.map(l =>
+    `<tr><td>${l.name}</td><td class="mono">${l.employee_id}</td><td>${l.department||''}</td>
+    <td>${l.leave_name}</td><td class="mono">${l.start_date}</td>
+    <td class="c">${l.days}d</td>
+    <td><span class="s-${l.status}">${capFirst(l.status||'')}</span></td>
+    <td>${l.reason||'—'}</td></tr>`
+  ).join('') : '';
+
+  printHTML(reportStyles() + `
+    <div class="rpt-header">
+      <div class="rpt-logo">⏱ WorkPulse</div>
+      <h1>Attendance & Leave Report</h1>
+      <p>${scope}</p>
+      <p class="period">${monthName}</p>
+    </div>
+    <h2>Summary by Employee</h2>
+    <table><thead><tr><th>Employee</th><th>ID</th><th>Department</th><th>On-time</th><th>Late</th><th>Absent</th><th>On Leave</th></tr></thead>
+    <tbody>${summaryRows||'<tr><td colspan="7" style="text-align:center;color:#94a3b8">No data</td></tr>'}</tbody></table>
+    ${type !== 'leave' ? `
+    <h2 style="margin-top:24px">Attendance Detail</h2>
+    <table><thead><tr><th>Employee</th><th>ID</th><th>Dept</th><th>Date</th><th>Day</th><th>In</th><th>Out</th><th>Status</th></tr></thead>
+    <tbody>${attRows||'<tr><td colspan="8" style="text-align:center;color:#94a3b8">No records</td></tr>'}</tbody></table>` : ''}
+    ${type !== 'attendance' && leaves.length ? `
+    <h2 style="margin-top:24px">Leave Requests</h2>
+    <table><thead><tr><th>Employee</th><th>ID</th><th>Dept</th><th>Leave Type</th><th>Start</th><th>Days</th><th>Status</th><th>Reason</th></tr></thead>
+    <tbody>${leaveRows}</tbody></table>` : ''}
+    <div class="rpt-footer">Generated by WorkPulse · ${new Date().toLocaleDateString()} · ${state.user.name}</div>
+  `);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+async function fetchTeamData() {
+  const month = document.getElementById('team-month')?.value || new Date().toISOString().slice(0,7);
+  const dept  = document.getElementById('team-dept')?.value  || '';
+  const type  = document.getElementById('team-type')?.value  || 'both';
+  showToast('success', 'Loading report data…');
+  const r = await api('GET', `/reports/team-attendance?month=${month}&dept=${encodeURIComponent(dept)}`);
+  if (!r.ok) { showToast('error', 'Failed to load data'); return {month,dept,type,data:null}; }
+  return {month, dept, type, data: r.data};
+}
+
+async function loadSheetJS() {
+  if (window.XLSX) return window.XLSX;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload  = () => resolve(window.XLSX);
+    s.onerror = () => { showToast('error','Failed to load Excel library'); reject(); };
+    document.head.appendChild(s);
+  });
+}
+
+function printHTML(html) {
+  const win = window.open('', '_blank', 'width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <title>WorkPulse Report</title></head><body>${html}</body></html>`);
+  win.document.close();
+  setTimeout(() => { win.focus(); win.print(); }, 400);
+}
+
+function reportStyles() {
+  return `<style>
+    * { margin:0;padding:0;box-sizing:border-box; }
+    body { font-family:'Segoe UI',sans-serif;font-size:12px;color:#1e293b;padding:24px; }
+    .rpt-header { text-align:center;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #e2e8f0; }
+    .rpt-logo { font-size:20px;font-weight:800;color:#2563eb;margin-bottom:6px; }
+    h1 { font-size:18px;font-weight:700;color:#0f172a;margin-bottom:4px; }
+    .rpt-header p { color:#64748b;font-size:12px; }
+    .period { font-size:14px;font-weight:600;color:#334155;margin-top:4px; }
+    h2 { font-size:13px;font-weight:700;color:#0f1f3d;margin-bottom:8px;padding:6px 0;border-bottom:1px solid #e2e8f0; }
+    table { width:100%;border-collapse:collapse;margin-bottom:4px;font-size:11px; }
+    th { background:#f1f5f9;padding:6px 8px;text-align:left;font-weight:700;color:#475569;font-size:10px;text-transform:uppercase;letter-spacing:.04em; }
+    td { padding:5px 8px;border-bottom:1px solid #f1f5f9;color:#334155; }
+    tr:nth-child(even) td { background:#fafbfc; }
+    .mono { font-family:monospace;font-size:11px; }
+    .c { text-align:center; }
+    .summary-grid { display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px; }
+    .sum-card { text-align:center;padding:12px;border-radius:8px;border:1px solid #e2e8f0; }
+    .sum-num { font-size:22px;font-weight:800; }
+    .sum-lbl { font-size:11px;color:#64748b;margin-top:2px; }
+    .green { background:#f0fdf4; } .green .sum-num { color:#16a34a; }
+    .yellow { background:#fffbeb; } .yellow .sum-num { color:#d97706; }
+    .red { background:#fef2f2; } .red .sum-num { color:#dc2626; }
+    .purple { background:#f5f3ff; } .purple .sum-num { color:#7c3aed; }
+    .s-ontime,.s-approved,.s-approvedd { color:#16a34a;font-weight:600; }
+    .s-late,.s-pending { color:#d97706;font-weight:600; }
+    .s-absent,.s-rejected,.s-rejectedd { color:#dc2626;font-weight:600; }
+    .s-leave { color:#7c3aed;font-weight:600; }
+    .rpt-footer { text-align:center;margin-top:20px;padding-top:12px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:10px; }
+    @media print {
+      body { padding:12px; }
+      @page { margin:1cm; size:A4 landscape; }
+    }
+  </style>`;
+}
+
+function capFirst(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
