@@ -275,6 +275,7 @@ async function renderDashboard() {
   ]);
 
   const today = todayR.data;
+  window._dashAttendance = today;  // expose for overtime monitor
   const sum   = summaryR.data;
   const bals  = balR.data;
   const att   = attR.data;
@@ -337,10 +338,14 @@ async function renderDashboard() {
       </div>
     </div>`;
 
-  // Live clock
+  // Live clock + overtime monitor
   const tick = () => {
     const el = document.getElementById('live-clock');
-    if (el) { el.textContent = new Date().toLocaleTimeString('en-GB'); setTimeout(tick, 1000); }
+    if (el) {
+      el.textContent = new Date().toLocaleTimeString('en-GB');
+      checkOvertimeAlert();
+      setTimeout(tick, 1000);
+    }
   };
   tick();
 }
@@ -392,6 +397,237 @@ async function doPunchOut() {
   const distMsg = r.data.distance != null ? ` · ${r.data.distance}m from office` : '';
   showToast('success', `Punched out successfully${distMsg}`);
   await renderDashboard();
+}
+
+// ── Overtime & Auto-Checkout System ──────────────────────────────────────────
+
+const _ot = {
+  // Phase: 'regular' = before/at shift end, 'overtime' = user confirmed OT
+  phase:       'regular',
+  alertShown:  false,   // current warning modal visible
+  plannedOut:  null,    // HH:MM — only set when user confirms overtime
+  reportSent:  false,   // missing-checkout email sent
+};
+
+function _parseHM(t) {
+  if (!t) return null;
+  const [h,m] = t.split(':').map(Number);
+  return h*60+m;
+}
+function _nowMins() {
+  const n=new Date(); return n.getHours()*60+n.getMinutes();
+}
+function _minsToHHMM(mins) {
+  const h=Math.floor(mins/60)%24, m=mins%60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+
+async function checkOvertimeAlert() {
+  if (!state.user || state.page !== 'dashboard') return;
+  const att = window._dashAttendance;
+  if (!att || !att.punch_in || att.punch_out || att.status === 'leave') return;
+
+  const now       = _nowMins();
+  const shiftEnd  = _parseHM(state.user.shift_end);  // regular shift end, never changes
+  if (!shiftEnd) return;
+
+  // ── REGULAR PHASE: before/at shift end ─────────────────────────────────────
+  if (_ot.phase === 'regular') {
+    const warnAt = shiftEnd - 15;
+    // Show shift-end warning 15 min before (ask if doing OT)
+    if (now >= warnAt && now < shiftEnd && !_ot.alertShown) {
+      _ot.alertShown = true;
+      showShiftEndModal(shiftEnd);
+      return;
+    }
+    // Past shift end and no overtime — silently auto clock-out, no email
+    if (now >= shiftEnd && !_ot.alertShown && !window._autoCheckedOut) {
+      await performAutoCheckout(_minsToHHMM(shiftEnd) + ':00', false);
+    }
+    return;
+  }
+
+  // ── OVERTIME PHASE: user confirmed overtime, plannedOut is set ────────────
+  if (_ot.phase === 'overtime' && _ot.plannedOut) {
+    const plannedMins = _parseHM(_ot.plannedOut);
+    const warnAt      = plannedMins - 15;
+
+    // Past planned OT end — if modal was shown but ignored, notify supervisor
+    if (now >= plannedMins) {
+      if (_ot.alertShown && !_ot.reportSent) {
+        // Modal was open but user didn't click — send missing report
+        _ot.reportSent = true;
+        const overlay = document.getElementById('ot-overlay');
+        if (overlay) overlay.remove();
+        await api('POST', '/overtime/missing-report');
+        showToast('error', 'You missed your overtime clock-out. Your supervisor has been notified.');
+      } else if (!_ot.alertShown && !window._autoCheckedOut) {
+        // User clicked No on time — auto checkout already handled
+      }
+      return;
+    }
+
+    // Show warning 15 min before OT end
+    if (now >= warnAt && now < plannedMins && !_ot.alertShown) {
+      _ot.alertShown = true;
+      showOvertimeModal(plannedMins);
+    }
+  }
+}
+
+function showShiftEndModal(shiftEndMins) {
+  const existing = document.getElementById('ot-overlay');
+  if (existing) existing.remove();
+  const shiftEndStr = _minsToHHMM(shiftEndMins);
+  const overlay = document.createElement('div');
+  overlay.id = 'ot-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:2000;padding:20px;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:420px;overflow:hidden;animation:slideUp .2s ease">
+      <div style="background:linear-gradient(135deg,#0f1f3d,#1d3461);padding:20px 24px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:28px">⏰</span>
+        <div>
+          <div style="color:white;font-size:16px;font-weight:700">Shift ending soon!</div>
+          <div style="color:rgba(255,255,255,.6);font-size:13px">Your shift ends at ${shiftEndStr}</div>
+        </div>
+      </div>
+      <div style="padding:24px">
+        <p style="color:#334155;font-size:14px;margin-bottom:24px">
+          Your shift ends at <strong>${shiftEndStr}</strong>. You'll be automatically clocked out then.<br><br>
+          Are you planning to work overtime?
+        </p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <button id="se-no-btn"
+            style="padding:12px;border:1.5px solid #e2e8f0;border-radius:8px;background:white;color:#475569;font-size:14px;font-weight:600;cursor:pointer;font-family:DM Sans,sans-serif">
+            No, I'm leaving at ${shiftEndStr}
+          </button>
+          <button id="se-yes-btn"
+            style="padding:12px;border:none;border-radius:8px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;font-size:14px;font-weight:600;cursor:pointer;font-family:DM Sans,sans-serif;box-shadow:0 4px 12px rgba(37,99,235,.35)">
+            Yes, I'm doing overtime
+          </button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  document.getElementById('se-no-btn').onclick = async () => {
+    // User confirms leaving — close modal, auto-checkout fires at shift end naturally
+    overlay.remove();
+    _ot.alertShown = false;
+    // Schedule silent auto-checkout at exact shift end
+    const minsLeft = shiftEndMins - _nowMins();
+    if (minsLeft <= 0) {
+      await performAutoCheckout(shiftEndStr + ':00', false);
+    }
+    // tick will handle it when now >= shiftEnd
+  };
+
+  document.getElementById('se-yes-btn').onclick = () => {
+    overlay.remove();
+    _ot.alertShown = false;
+    // Switch to overtime phase — show OT hours input
+    _ot.phase = 'overtime';
+    _ot.plannedOut = shiftEndStr;  // temporary — will be updated by OT modal
+    showOvertimeModal(shiftEndMins);
+  };
+}
+
+function showOvertimeModal(plannedMins) {
+  const existing = document.getElementById('ot-overlay');
+  if (existing) existing.remove();
+  const plannedStr = _minsToHHMM(plannedMins);
+  const overlay = document.createElement('div');
+  overlay.id = 'ot-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:2000;padding:20px;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.25);width:100%;max-width:440px;overflow:hidden;animation:slideUp .2s ease">
+      <div style="background:linear-gradient(135deg,#92400e,#b45309);padding:20px 24px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:28px">🕐</span>
+        <div>
+          <div style="color:white;font-size:16px;font-weight:700">Overtime ending soon!</div>
+          <div style="color:rgba(255,255,255,.7);font-size:13px">Your overtime ends at ${plannedStr}</div>
+        </div>
+      </div>
+      <div style="padding:24px">
+        <p style="color:#334155;font-size:14px;margin-bottom:20px">
+          Your overtime clock-out is <strong>${plannedStr}</strong>. If you don't respond within 15 minutes, 
+          your supervisor will be notified of a missing clock-out.
+        </p>
+        <div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:10px;padding:16px;margin-bottom:20px">
+          <label style="display:block;font-size:13px;font-weight:600;color:#1e40af;margin-bottom:8px">Working overtime? Enter extra hours:</label>
+          <div style="display:flex;align-items:center;gap:10px">
+            <input id="ot-hours" type="number" min="0.5" max="8" step="0.5" value="1"
+              style="width:80px;padding:8px 12px;border:1.5px solid #bfdbfe;border-radius:8px;font-size:16px;font-weight:700;text-align:center;font-family:DM Mono,monospace;outline:none"/>
+            <span style="color:#1e40af;font-size:14px;font-weight:500">extra hour(s)</span>
+          </div>
+          <div id="ot-preview" style="margin-top:8px;font-size:12px;color:#64748b;font-style:italic"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <button id="ot-no-btn"
+            style="padding:12px;border:1.5px solid #e2e8f0;border-radius:8px;background:white;color:#475569;font-size:14px;font-weight:600;cursor:pointer;font-family:DM Sans,sans-serif">
+            No — clock me out at ${plannedStr}
+          </button>
+          <button id="ot-yes-btn"
+            style="padding:12px;border:none;border-radius:8px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:white;font-size:14px;font-weight:600;cursor:pointer;font-family:DM Sans,sans-serif;box-shadow:0 4px 12px rgba(37,99,235,.35)">
+            Yes, I'm staying
+          </button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Preview
+  const hoursInput = document.getElementById('ot-hours');
+  const preview    = document.getElementById('ot-preview');
+  const updatePreview = () => {
+    const h = parseFloat(hoursInput.value) || 0;
+    const newMins = plannedMins + Math.round(h * 60);
+    preview.textContent = `New clock-out: ${_minsToHHMM(newMins)} · Next reminder at ${_minsToHHMM(newMins - 15)}`;
+  };
+  hoursInput.addEventListener('input', updatePreview);
+  updatePreview();
+
+  document.getElementById('ot-no-btn').onclick  = () => handleOvertimeNo(plannedStr);
+  document.getElementById('ot-yes-btn').onclick = () => handleOvertimeYes(plannedMins);
+}
+
+async function handleOvertimeNo(plannedStr) {
+  const overlay = document.getElementById('ot-overlay');
+  if (overlay) overlay.remove();
+  _ot.alertShown = false;
+  // User responded — auto clock-out silently, no supervisor report needed
+  await performAutoCheckout(plannedStr + ':00', false);
+}
+
+async function handleOvertimeYes(currentPlannedMins) {
+  const hoursEl   = document.getElementById('ot-hours');
+  const extra     = parseFloat(hoursEl ? hoursEl.value : 1) || 1;
+  const newMins   = currentPlannedMins + Math.round(extra * 60);
+  const newStr    = _minsToHHMM(newMins);
+  await api('POST', '/overtime/set', { planned_checkout: newStr });
+  _ot.plannedOut  = newStr;
+  _ot.alertShown  = false;
+  _ot.phase       = 'overtime';   // now in overtime phase — supervisor notified if missed
+  const overlay = document.getElementById('ot-overlay');
+  if (overlay) overlay.remove();
+  showToast('success', `Overtime logged! Reminder at ${_minsToHHMM(newMins - 15)}, auto clock-out at ${newStr}`);
+}
+
+async function performAutoCheckout(timeStr, isOvertime=false) {
+  if (window._autoCheckedOut) return;
+  window._autoCheckedOut = true;
+  const r = await api('POST', '/overtime/auto-checkout', { time: timeStr });
+  if (r.ok && !r.data.already_done) {
+    window._dashAttendance = { ...window._dashAttendance, punch_out: timeStr };
+    if (isOvertime) {
+      // Overtime auto-checkout: notify supervisor since money is involved
+      await api('POST', '/overtime/missing-report');
+      showToast('success', `Auto clocked out at ${timeStr.slice(0,5)} ✅ · Supervisor notified`);
+    } else {
+      showToast('success', `Auto clocked out at ${timeStr.slice(0,5)} ✅`);
+    }
+    if (state.page === 'dashboard') await renderDashboard();
+  }
 }
 
 function buildCalendar(att) {
@@ -756,6 +992,9 @@ async function loadTeamData() {
     else if (r.status) counts[r.status] = (counts[r.status]||0)+1;
   });
 
+  const missingR = await api('GET', `/attendance/missing-checkouts?date=${date}`);
+  const missing  = missingR.ok ? missingR.data : [];
+
   document.getElementById('team-content').innerHTML = `
     <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:20px">
       <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num">${counts.ontime}</div><div class="stat-label">On-time</div></div></div>
@@ -764,6 +1003,28 @@ async function loadTeamData() {
       <div class="stat-card"><div class="stat-icon purple">🏖</div><div><div class="stat-num">${counts.leave}</div><div class="stat-label">On Leave</div></div></div>
       <div class="stat-card"><div class="stat-icon blue">⏳</div><div><div class="stat-num">${counts.not_in}</div><div class="stat-label">Not Punched</div></div></div>
     </div>
+    ${missing.length ? `
+    <div class="card mb-4" style="border:1.5px solid #fecaca">
+      <div class="card-header" style="background:#fef2f2">
+        <h3 style="color:#dc2626">⚠️ Missing Clock-Out (${missing.length})</h3>
+        <span class="text-sm text-muted">Enter clock-out time manually</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Employee</th><th>Department</th><th>Shift End</th><th>Clock In</th><th>Enter Clock-Out Time</th><th></th></tr></thead>
+          <tbody>
+            ${missing.map(m => `<tr>
+              <td><strong>${m.name}</strong><div style="font-size:11px;color:var(--text-s)">${m.employee_id}</div></td>
+              <td>${m.department||'—'}</td>
+              <td class="font-mono">${m.shift_end||'—'}</td>
+              <td class="font-mono">${m.punch_in ? m.punch_in.slice(0,5) : '—'}</td>
+              <td><input type="time" id="mc-${m.id}" style="padding:7px 10px;border:1.5px solid var(--grey-200);border-radius:8px;font-family:DM Mono,monospace;font-size:14px" value="${m.shift_end||'18:00'}"/></td>
+              <td><button class="btn btn-primary btn-sm" onclick="saveManualCheckout(${m.id},'${date}')">Save</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
     <div class="card">
       <div class="card-header"><h3>Team Status for ${date}</h3><span class="text-sm text-muted">${rows.length} employees</span></div>
       <div class="table-wrap">
@@ -783,6 +1044,18 @@ async function loadTeamData() {
         </table>
       </div>
     </div>`;
+}
+
+async function saveManualCheckout(userId, date) {
+  const timeEl = document.getElementById(`mc-${userId}`);
+  if (!timeEl || !timeEl.value) { showToast('error','Please enter a time'); return; }
+  const r = await api('POST', '/overtime/manual-checkout', { user_id: userId, date, time: timeEl.value });
+  if (r.ok) {
+    showToast('success', 'Clock-out time saved');
+    await loadTeamData();
+  } else {
+    showToast('error', r.data.error || 'Failed to save');
+  }
 }
 
 // ── Leave Approvals ───────────────────────────────────────────────────────────

@@ -610,6 +610,136 @@ def clear_today():
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+
+# ── Overtime & Auto Checkout ──────────────────────────────────────────────────
+@app.route('/api/overtime/set', methods=['POST'])
+def set_overtime():
+    """Employee confirms overtime — store planned checkout time."""
+    err = require_login()
+    if err: return err
+    uid   = session['user_id']
+    data  = request.json
+    today = today_local().isoformat()
+    planned_out = data.get('planned_checkout')   # e.g. '19:00'
+    conn = get_db(); c = conn.cursor()
+    # Store planned_checkout in attendance notes JSON
+    c.execute("SELECT notes FROM attendance WHERE user_id=%s AND date=%s", (uid, today))
+    row = c.fetchone()
+    notes_data = {}
+    if row and row['notes']:
+        try: notes_data = json.loads(row['notes'])
+        except: notes_data = {}
+    notes_data['planned_checkout'] = planned_out
+    notes_data['overtime'] = True
+    c.execute("UPDATE attendance SET notes=%s WHERE user_id=%s AND date=%s",
+              (json.dumps(notes_data), uid, today))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'planned_checkout': planned_out})
+
+@app.route('/api/overtime/auto-checkout', methods=['POST'])
+def auto_checkout():
+    """System auto punch-out at planned checkout time (called by frontend timer)."""
+    err = require_login()
+    if err: return err
+    uid   = session['user_id']
+    today = today_local().isoformat()
+    checkout_time = request.json.get('time')   # HH:MM:SS
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s", (uid, today))
+    att = c.fetchone()
+    if not att or not att['punch_in']:
+        conn.close(); return jsonify({'error': 'No punch-in found'}), 400
+    if att['punch_out']:
+        conn.close(); return jsonify({'ok': True, 'already_done': True})
+    c.execute("UPDATE attendance SET punch_out=%s WHERE user_id=%s AND date=%s",
+              (checkout_time, uid, today))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'punch_out': checkout_time})
+
+@app.route('/api/overtime/missing-report', methods=['POST'])
+def missing_checkout_report():
+    """Notify supervisor when employee forgets to clock out entirely."""
+    err = require_login()
+    if err: return err
+    uid   = session['user_id']
+    today = today_local().isoformat()
+    conn  = get_db(); c = conn.cursor()
+    c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s", (uid, today)); att = c.fetchone()
+    c.execute("SELECT * FROM users WHERE id=%s", (uid,)); emp = c.fetchone()
+    mgr = None
+    if emp['manager_id']:
+        c.execute("SELECT * FROM users WHERE id=%s", (emp['manager_id'],)); mgr = c.fetchone()
+    conn.close()
+    if not att or not att['punch_in']: return jsonify({'ok': False, 'error': 'No attendance record'}), 400
+    if not mgr: return jsonify({'ok': True, 'note': 'No supervisor to notify'})
+    base = get_setting('base_url', 'http://localhost:5000')
+    html = f"""<div style="font-family:sans-serif;max-width:600px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+      <div style="background:#0f1f3d;padding:24px 28px"><h2 style="color:white;margin:0">⚠️ WorkPulse — Missing Clock-Out</h2></div>
+      <div style="padding:28px">
+        <p>Hi <strong>{mgr['name']}</strong>,</p>
+        <p><strong>{emp['name']}</strong> did not clock out today and the system could not determine their checkout time.</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">
+          <tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600;width:140px">Employee</td><td style="padding:10px">{emp['name']} ({emp['employee_id']})</td></tr>
+          <tr><td style="padding:10px;color:#64748b;font-weight:600">Department</td><td style="padding:10px">{emp['department'] or '—'}</td></tr>
+          <tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600">Date</td><td style="padding:10px">{today}</td></tr>
+          <tr><td style="padding:10px;color:#64748b;font-weight:600">Clock In</td><td style="padding:10px">{att['punch_in']}</td></tr>
+          <tr style="background:#fef2f2"><td style="padding:10px;color:#dc2626;font-weight:600">Clock Out</td><td style="padding:10px;color:#dc2626"><strong>MISSING</strong></td></tr>
+        </table>
+        <p style="color:#64748b;font-size:14px">Please log in to WorkPulse to manually enter their clock-out time.</p>
+        <a href="{base}" style="display:inline-block;background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Open WorkPulse →</a>
+      </div>
+      <div style="background:#f8fafc;padding:14px 28px;font-size:12px;color:#94a3b8;border-top:1px solid #e2e8f0">Automated notification from WorkPulse.</div>
+    </div>"""
+    ok, msg = send_email(mgr['email'], f"Missing Clock-Out: {emp['name']} — {today}", html)
+    return jsonify({'ok': True, 'email_sent': ok, 'note': msg})
+
+@app.route('/api/overtime/manual-checkout', methods=['POST'])
+def manual_checkout():
+    """Supervisor manually sets clock-out time for an employee."""
+    err = require_login()
+    if err: return err
+    if session['role'] not in ('manager', 'hr_admin'):
+        return jsonify({'error': 'Forbidden'}), 403
+    data    = request.json
+    user_id = data['user_id']
+    date_   = data['date']
+    time_   = data['time']   # HH:MM
+    conn    = get_db(); c = conn.cursor()
+    c.execute("UPDATE attendance SET punch_out=%s, notes=COALESCE(notes,'') WHERE user_id=%s AND date=%s",
+              (time_ + ':00', user_id, date_))
+    if c.rowcount == 0:
+        conn.close(); return jsonify({'error': 'Attendance record not found'}), 404
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/attendance/missing-checkouts')
+def missing_checkouts():
+    """Get employees with punch-in but no punch-out for a given date (manager/HR only)."""
+    err = require_login()
+    if err: return err
+    uid  = session['user_id']
+    role = session['role']
+    if role not in ('manager', 'hr_admin'):
+        return jsonify({'error': 'Forbidden'}), 403
+    date_ = request.args.get('date', today_local().isoformat())
+    conn  = get_db(); c = conn.cursor()
+    if role == 'hr_admin':
+        c.execute("""SELECT u.id,u.name,u.employee_id,u.department,u.shift_end,
+                          a.punch_in,a.punch_out,a.date,a.notes
+                   FROM attendance a JOIN users u ON a.user_id=u.id
+                   WHERE a.date=%s AND a.punch_in IS NOT NULL
+                   AND (a.punch_out IS NULL OR a.punch_out='')
+                   AND u.role!='hr_admin' ORDER BY u.name""", (date_,))
+    else:
+        c.execute("""SELECT u.id,u.name,u.employee_id,u.department,u.shift_end,
+                          a.punch_in,a.punch_out,a.date,a.notes
+                   FROM attendance a JOIN users u ON a.user_id=u.id
+                   WHERE a.date=%s AND a.punch_in IS NOT NULL
+                   AND (a.punch_out IS NULL OR a.punch_out='')
+                   AND u.manager_id=%s ORDER BY u.name""", (date_, uid))
+    data = c.fetchall(); conn.close()
+    return jsonify([dict(r) for r in data])
+
 @app.route('/')
 @app.route('/<path:path>')
 def serve(path=''):
