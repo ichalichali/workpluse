@@ -1896,3 +1896,289 @@ function reportStyles() {
 }
 
 function capFirst(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+
+// ============================================================
+// OnTime · app.js · R1 Audit Log Patch
+// ============================================================
+// Three small additions to your existing app.js. No deletions.
+// ============================================================
+
+
+// ────────────────────────────────────────────────────────────────────────
+// EDIT 1 — Add nav item to HR Admin sidebar section
+// ────────────────────────────────────────────────────────────────────────
+// Location: inside renderShell(), in the HR Admin section
+// Find this block (around line 216-219):
+
+//        <button class="nav-item ${state.page==='settings'?'active':''}" onclick="navigate('settings')">
+//          <span class="nav-icon">⚙️</span> Settings
+//        </button>
+//      </div>` : ''}
+
+// REPLACE WITH:
+
+//        <button class="nav-item ${state.page==='settings'?'active':''}" onclick="navigate('settings')">
+//          <span class="nav-icon">⚙️</span> Settings
+//        </button>
+//        <button class="nav-item ${state.page==='audit'?'active':''}" onclick="navigate('audit')">
+//          <span class="nav-icon">📋</span> Audit Log
+//        </button>
+//      </div>` : ''}
+
+
+// ────────────────────────────────────────────────────────────────────────
+// EDIT 2 — Add 'audit' case to the page dispatcher
+// ────────────────────────────────────────────────────────────────────────
+// Location: inside loadPage(), around line 265
+// Find this switch (around line 256-266):
+
+//   switch(state.page) {
+//     case 'dashboard':   return renderDashboard();
+//     case 'attendance':  return renderAttendance();
+//     case 'leave':       return renderLeave();
+//     case 'team':        return renderTeam();
+//     case 'approvals':   return renderApprovals();
+//     case 'employees':   return renderEmployees();
+//     case 'branches':    return renderBranches();
+//     case 'settings':    return renderSettings();
+//     case 'reports':     return renderReports();
+//   }
+
+// REPLACE WITH (just add the 'audit' line):
+
+//   switch(state.page) {
+//     case 'dashboard':   return renderDashboard();
+//     case 'attendance':  return renderAttendance();
+//     case 'leave':       return renderLeave();
+//     case 'team':        return renderTeam();
+//     case 'approvals':   return renderApprovals();
+//     case 'employees':   return renderEmployees();
+//     case 'branches':    return renderBranches();
+//     case 'settings':    return renderSettings();
+//     case 'reports':     return renderReports();
+//     case 'audit':       return renderAudit();
+//   }
+
+
+// ────────────────────────────────────────────────────────────────────────
+// EDIT 3 — Add the renderAudit() function (new code)
+// ────────────────────────────────────────────────────────────────────────
+// Location: append to the END of your app.js file
+// Copy everything below this line into app.js
+// ────────────────────────────────────────────────────────────────────────
+
+// ── Audit Log Page (HR Admin) ────────────────────────────────────────────────
+const auditState = { limit: 50, offset: 0, total: 0, rows: [], filters: {}, users: [] };
+
+const AUDIT_ACTIONS = [
+  'login_success','login_failed','logout',
+  'punch_in','punch_out','auto_checkout','manual_checkout','overtime_set',
+  'leave_apply','leave_approve','leave_reject',
+  'user_create','user_update','user_password_reset',
+  'branch_create','branch_update','branch_delete',
+  'settings_update',
+  'password_reset_requested','password_reset_completed'
+];
+
+function _auditFmtTime(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('en-GB', {
+    timeZone: 'Asia/Jakarta',
+    year:'numeric', month:'short', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit'
+  });
+}
+
+function _auditEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+async function renderAudit() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header flex justify-between items-center">
+      <div>
+        <h1>📋 Audit Log</h1>
+        <p>Compliance-grade record of every state change in OnTime</p>
+      </div>
+      <button class="btn btn-secondary" onclick="auditExportCSV()">⬇ Export CSV</button>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="grid grid-cols-5 gap-3" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end">
+        <div><label class="form-label">User</label>
+          <select id="aud-f-user" class="form-input">
+            <option value="">All users</option>
+          </select></div>
+        <div><label class="form-label">Action</label>
+          <select id="aud-f-action" class="form-input">
+            <option value="">All actions</option>
+            ${AUDIT_ACTIONS.map(a=>`<option value="${a}">${a}</option>`).join('')}
+          </select></div>
+        <div><label class="form-label">Entity</label>
+          <select id="aud-f-entity" class="form-input">
+            <option value="">Any</option>
+            <option value="user">user</option>
+            <option value="leave_request">leave_request</option>
+            <option value="attendance">attendance</option>
+            <option value="branch">branch</option>
+            <option value="settings">settings</option>
+          </select></div>
+        <div><label class="form-label">From date</label>
+          <input type="date" id="aud-f-from" class="form-input"></div>
+        <div><label class="form-label">To date</label>
+          <input type="date" id="aud-f-to" class="form-input"></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-secondary" onclick="auditClear()">Clear</button>
+        <button class="btn btn-primary" onclick="auditApply()">Apply</button>
+      </div>
+    </div>
+
+    <div class="card" style="padding:0;overflow:hidden">
+      <table class="data-table" style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr><th>Time</th><th>User</th><th>Action</th><th>Entity</th><th>IP</th></tr>
+        </thead>
+        <tbody id="aud-tbody"><tr><td colspan="5" style="text-align:center;padding:32px;color:#94a3b8">Loading…</td></tr></tbody>
+      </table>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:14px;color:#64748b">
+        <span id="aud-summary">—</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-secondary btn-sm" id="aud-prev" onclick="auditPrev()">← Prev</button>
+          <span id="aud-page">Page 1</span>
+          <button class="btn btn-secondary btn-sm" id="aud-next" onclick="auditNext()">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="aud-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:12px;width:90%;max-width:720px;max-height:80vh;display:flex;flex-direction:column">
+        <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0">Audit Entry Detail</h3>
+          <button onclick="document.getElementById('aud-modal').style.display='none'" style="background:none;border:none;font-size:24px;cursor:pointer;color:#64748b">×</button>
+        </div>
+        <div id="aud-modal-body" style="padding:20px;overflow-y:auto">—</div>
+      </div>
+    </div>
+  `;
+  // Load users for filter
+  const uRes = await api('GET', '/users');
+  if (uRes.ok) {
+    auditState.users = uRes.data;
+    const sel = document.getElementById('aud-f-user');
+    uRes.data.forEach(u => {
+      const o = document.createElement('option');
+      o.value = u.id; o.textContent = `${u.name} (${u.email})`;
+      sel.appendChild(o);
+    });
+  }
+  await auditLoad();
+}
+
+async function auditLoad() {
+  const params = new URLSearchParams();
+  Object.entries(auditState.filters).forEach(([k,v]) => { if (v) params.append(k,v); });
+  params.append('limit',  auditState.limit);
+  params.append('offset', auditState.offset);
+  const r = await api('GET', '/audit-log?' + params.toString());
+  if (!r.ok) {
+    document.getElementById('aud-tbody').innerHTML =
+      `<tr><td colspan="5" style="text-align:center;padding:32px;color:#dc2626">Failed to load.</td></tr>`;
+    return;
+  }
+  auditState.rows  = r.data.rows || [];
+  auditState.total = r.data.total || 0;
+  auditRender();
+}
+
+function auditRender() {
+  const tbody = document.getElementById('aud-tbody');
+  if (!auditState.rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:32px;color:#94a3b8">No entries match these filters.</td></tr>`;
+  } else {
+    tbody.innerHTML = auditState.rows.map((row, i) => `
+      <tr style="cursor:pointer" onclick="auditDetail(${i})">
+        <td style="padding:12px;border-bottom:1px solid #f1f5f9;color:#64748b;white-space:nowrap;font-variant-numeric:tabular-nums">${_auditFmtTime(row.created_at)}</td>
+        <td style="padding:12px;border-bottom:1px solid #f1f5f9;font-weight:500">${_auditEsc(row.user_name)}</td>
+        <td style="padding:12px;border-bottom:1px solid #f1f5f9"><span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;background:#eff6ff;color:#1e40af">${_auditEsc(row.action)}</span></td>
+        <td style="padding:12px;border-bottom:1px solid #f1f5f9">${_auditEsc(row.entity_type || '')}${row.entity_id ? ' #' + row.entity_id : ''}</td>
+        <td style="padding:12px;border-bottom:1px solid #f1f5f9;color:#64748b">${_auditEsc(row.ip || '—')}</td>
+      </tr>
+    `).join('');
+  }
+  const start = auditState.total === 0 ? 0 : auditState.offset + 1;
+  const end   = Math.min(auditState.offset + auditState.limit, auditState.total);
+  document.getElementById('aud-summary').textContent = `Showing ${start}–${end} of ${auditState.total}`;
+  const page  = Math.floor(auditState.offset / auditState.limit) + 1;
+  const pages = Math.max(1, Math.ceil(auditState.total / auditState.limit));
+  document.getElementById('aud-page').textContent = `Page ${page} of ${pages}`;
+  document.getElementById('aud-prev').disabled = auditState.offset === 0;
+  document.getElementById('aud-next').disabled = end >= auditState.total;
+}
+
+function auditApply() {
+  auditState.filters = {
+    user_id:     document.getElementById('aud-f-user').value,
+    action:      document.getElementById('aud-f-action').value,
+    entity_type: document.getElementById('aud-f-entity').value,
+    from_date:   document.getElementById('aud-f-from').value,
+    to_date:     document.getElementById('aud-f-to').value
+  };
+  auditState.offset = 0;
+  auditLoad();
+}
+
+function auditClear() {
+  ['aud-f-user','aud-f-action','aud-f-entity','aud-f-from','aud-f-to']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  auditState.filters = {};
+  auditState.offset  = 0;
+  auditLoad();
+}
+
+function auditPrev() {
+  if (auditState.offset >= auditState.limit) {
+    auditState.offset -= auditState.limit;
+    auditLoad();
+  }
+}
+function auditNext() {
+  if (auditState.offset + auditState.limit < auditState.total) {
+    auditState.offset += auditState.limit;
+    auditLoad();
+  }
+}
+
+function auditDetail(idx) {
+  const row = auditState.rows[idx];
+  let html = `
+    <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 16px;margin-bottom:16px;font-size:14px">
+      <span style="color:#64748b;font-weight:500">Timestamp</span><span>${_auditFmtTime(row.created_at)}</span>
+      <span style="color:#64748b;font-weight:500">User</span><span>${_auditEsc(row.user_name)} (id ${row.user_id ?? '—'})</span>
+      <span style="color:#64748b;font-weight:500">Action</span><span><span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;background:#eff6ff;color:#1e40af">${_auditEsc(row.action)}</span></span>
+      <span style="color:#64748b;font-weight:500">Entity</span><span>${_auditEsc(row.entity_type || '—')}${row.entity_id ? ' #' + row.entity_id : ''}</span>
+      <span style="color:#64748b;font-weight:500">IP</span><span>${_auditEsc(row.ip || '—')}</span>
+      <span style="color:#64748b;font-weight:500">User agent</span><span style="word-break:break-all;font-size:12px">${_auditEsc(row.user_agent || '—')}</span>
+    </div>
+  `;
+  if (row.before) {
+    html += `<div style="font-size:12px;font-weight:600;color:#b91c1c;text-transform:uppercase;margin-top:8px">BEFORE</div>
+             <pre style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:12px;font-size:12px;overflow-x:auto;margin:4px 0 12px">${_auditEsc(JSON.stringify(row.before, null, 2))}</pre>`;
+  }
+  if (row.after) {
+    html += `<div style="font-size:12px;font-weight:600;color:#166534;text-transform:uppercase;margin-top:8px">AFTER</div>
+             <pre style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:12px;font-size:12px;overflow-x:auto;margin:4px 0 12px">${_auditEsc(JSON.stringify(row.after, null, 2))}</pre>`;
+  }
+  if (!row.before && !row.after) {
+    html += `<div style="color:#94a3b8;font-size:13px">No before/after payload for this event.</div>`;
+  }
+  document.getElementById('aud-modal-body').innerHTML = html;
+  document.getElementById('aud-modal').style.display = 'flex';
+}
+
+function auditExportCSV() {
+  window.location.href = '/api/audit-log/export';
+}

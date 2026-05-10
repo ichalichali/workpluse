@@ -1,5 +1,5 @@
-from flask import Flask, request, jsonify, session, send_from_directory
-import os, json, math, smtplib, hashlib, secrets
+from flask import Flask, request, jsonify, session, send_from_directory, Response
+import os, json, math, smtplib, hashlib, secrets, csv, io, sys
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from email.mime.multipart import MIMEMultipart
@@ -116,7 +116,41 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
     """)
+
+    # ── Phase 1 Migrations ────────────────────────────────────────────────────
+    # Schema migration tracker (records which releases have been applied)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            release_id TEXT PRIMARY KEY,
+            applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            notes TEXT
+        )
+    """)
     conn.commit()
+
+    # Release 1 · Audit Log (idempotent, safe to re-run)
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                action TEXT NOT NULL,
+                entity_type TEXT, entity_id INTEGER,
+                before_json JSONB, after_json JSONB,
+                ip_address TEXT, user_agent TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_audit_user    ON audit_log(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_audit_action  ON audit_log(action)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_audit_entity  ON audit_log(entity_type, entity_id)")
+        c.execute("INSERT INTO schema_migrations (release_id, notes) VALUES ('R1_audit_log', 'Phase 1 - Audit Log') ON CONFLICT DO NOTHING")
+        conn.commit()
+        print("[init_db] R1 Audit Log applied")
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] R1 FAILED: {e}")
 
     # Seed leave types
     c.execute("SELECT COUNT(*) as cnt FROM leave_types")
@@ -254,17 +288,43 @@ def require_login():
 def row(c): return c.fetchone()
 def rows(c): return c.fetchall()
 
+# ── R1 Audit Log Helper ───────────────────────────────────────────────────────
+def log_audit(c, user_id, action, entity_type=None, entity_id=None, before=None, after=None):
+    """Write audit row using existing cursor. Caller commits. Never raises."""
+    try:
+        ip = request.remote_addr if request else None
+        ua = (request.headers.get('User-Agent') or '')[:500] if request else None
+        c.execute("""INSERT INTO audit_log (user_id,action,entity_type,entity_id,before_json,after_json,ip_address,user_agent)
+                     VALUES (%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s)""",
+                  (user_id, action, entity_type, entity_id,
+                   json.dumps(before, default=str) if before is not None else None,
+                   json.dumps(after,  default=str) if after  is not None else None,
+                   ip, ua))
+    except Exception as e:
+        print(f"[AUDIT ERROR] {action} user={user_id}: {e}", file=sys.stderr)
+
+def diff_dict(before, after, fields=None):
+    """Build minimal before/after pair containing only changed fields."""
+    if fields is None:
+        fields = set(before.keys()) | set(after.keys())
+    b = {k: before.get(k) for k in fields if before.get(k) != after.get(k)}
+    a = {k: after.get(k)  for k in fields if before.get(k) != after.get(k)}
+    return (b if b else None, a if a else None)
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 @app.route('/api/login',methods=['POST'])
 def login():
     data=request.json; conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM users WHERE email=%s AND password=%s",(data['email'],hash_password(data['password'])))
-    user=row(c); conn.close()
-    if not user: return jsonify({'error':'Invalid credentials'}),401
+    user=row(c)
+    if not user:
+        log_audit(c, None, 'login_failed', entity_type='user', after={'email': data.get('email')})
+        conn.commit(); conn.close()
+        return jsonify({'error':'Invalid credentials'}),401
     session['user_id']=user['id']; session['role']=user['role']
-    conn=get_db(); c=conn.cursor()
+    log_audit(c, user['id'], 'login_success', entity_type='user', entity_id=user['id'])
     c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s",(user['id'],today_local().isoformat()))
-    att=row(c); conn.close()
+    att=row(c); conn.commit(); conn.close()
     punch_status=att['status'] if att else ('not_punched' if today_local().weekday()<5 else None)
     return jsonify({'user':{'id':user['id'],'name':user['name'],'first_name':user['first_name'],'last_name':user['last_name'],
         'email':user['email'],'role':user['role'],'employee_id':user['employee_id'],
@@ -273,15 +333,23 @@ def login():
 
 @app.route('/api/logout',methods=['POST'])
 def logout():
+    uid = session.get('user_id')
+    conn=get_db(); c=conn.cursor()
+    log_audit(c, uid, 'logout', entity_type='user', entity_id=uid)
+    conn.commit(); conn.close()
     session.clear(); return jsonify({'ok':True})
 
 @app.route('/api/forgot-password',methods=['POST'])
 def forgot_password():
     email=request.json.get('email'); conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM users WHERE email=%s",(email,)); user=row(c)
-    if not user: conn.close(); return jsonify({'ok':True})
+    if not user:
+        log_audit(c, None, 'password_reset_requested', entity_type='user', after={'email': email, 'found': False})
+        conn.commit(); conn.close()
+        return jsonify({'ok':True})
     token=secrets.token_urlsafe(32); expires=(now_local()+timedelta(hours=1)).isoformat()
     c.execute("UPDATE users SET reset_token=%s,reset_expires=%s WHERE id=%s",(token,expires,user['id']))
+    log_audit(c, user['id'], 'password_reset_requested', entity_type='user', entity_id=user['id'], after={'email': email})
     conn.commit(); conn.close()
     return jsonify({'ok':True,'demo_token':token,'message':f'Reset link sent to {email}.'})
 
@@ -292,6 +360,7 @@ def reset_password():
     if not user or user['reset_expires']<now_local().isoformat():
         conn.close(); return jsonify({'error':'Invalid or expired token'}),400
     c.execute("UPDATE users SET password=%s,reset_token=NULL,reset_expires=NULL WHERE id=%s",(hash_password(data['password']),user['id']))
+    log_audit(c, user['id'], 'password_reset_completed', entity_type='user', entity_id=user['id'])
     conn.commit(); conn.close(); return jsonify({'ok':True})
 
 # ── Attendance ────────────────────────────────────────────────────────────────
@@ -313,6 +382,8 @@ def punch_in():
     c.execute("""INSERT INTO attendance (user_id,date,punch_in,status,lat_in,lon_in,geo_in) VALUES (%s,%s,%s,%s,%s,%s,%s)
                  ON CONFLICT(user_id,date) DO UPDATE SET punch_in=%s,status=%s,lat_in=%s,lon_in=%s,geo_in=%s""",
               (uid,today,now,status,lat,lon,geo,now,status,lat,lon,geo))
+    log_audit(c, uid, 'punch_in', entity_type='attendance',
+              after={'date':today,'punch_in':now,'status':status,'lat':lat,'lon':lon,'geo':geo,'distance_m':dist})
     conn.commit(); conn.close()
     return jsonify({'ok':True,'status':status,'punch_in':now,'distance':dist})
 
@@ -331,6 +402,8 @@ def punch_out():
     if not allowed: conn.close(); return jsonify({'error':f"You are {dist}m from {bname}. Must be within the allowed radius.",'distance':dist}),403
     geo=f"{dist}m from {bname}" if dist else 'verified'
     c.execute("UPDATE attendance SET punch_out=%s,lat_out=%s,lon_out=%s,geo_out=%s WHERE user_id=%s AND date=%s",(now,lat,lon,geo,uid,today))
+    log_audit(c, uid, 'punch_out', entity_type='attendance', entity_id=existing['id'],
+              after={'punch_out':now,'lat':lat,'lon':lon,'geo':geo,'distance_m':dist})
     conn.commit(); conn.close()
     return jsonify({'ok':True,'punch_out':now,'distance':dist})
 
@@ -393,11 +466,19 @@ def save_branch():
     if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
     data=request.json; conn=get_db(); c=conn.cursor()
     if data.get('id'):
+        c.execute("SELECT * FROM branches WHERE id=%s",(data['id'],)); old=row(c)
         c.execute("UPDATE branches SET name=%s,address=%s,latitude=%s,longitude=%s,radius_m=%s WHERE id=%s",
                   (data['name'],data.get('address',''),data.get('latitude'),data.get('longitude'),data.get('radius_m',200),data['id']))
+        new={'name':data['name'],'address':data.get('address',''),'latitude':data.get('latitude'),'longitude':data.get('longitude'),'radius_m':data.get('radius_m',200)}
+        old_d={'name':old['name'],'address':old['address'],'latitude':old['latitude'],'longitude':old['longitude'],'radius_m':old['radius_m']} if old else {}
+        b,a=diff_dict(old_d, new)
+        if b: log_audit(c, session['user_id'], 'branch_update', entity_type='branch', entity_id=data['id'], before=b, after=a)
     else:
-        c.execute("INSERT INTO branches (name,address,latitude,longitude,radius_m) VALUES (%s,%s,%s,%s,%s)",
+        c.execute("INSERT INTO branches (name,address,latitude,longitude,radius_m) VALUES (%s,%s,%s,%s,%s) RETURNING id",
                   (data['name'],data.get('address',''),data.get('latitude'),data.get('longitude'),data.get('radius_m',200)))
+        new_id=row(c)['id']
+        log_audit(c, session['user_id'], 'branch_create', entity_type='branch', entity_id=new_id,
+                  after={'name':data['name'],'address':data.get('address',''),'latitude':data.get('latitude'),'longitude':data.get('longitude'),'radius_m':data.get('radius_m',200)})
     conn.commit(); conn.close(); return jsonify({'ok':True})
 
 @app.route('/api/branches/delete',methods=['POST'])
@@ -405,8 +486,12 @@ def delete_branch():
     err=require_login()
     if err: return err
     if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
-    conn=get_db(); c=conn.cursor()
-    c.execute("DELETE FROM branches WHERE id=%s",(request.json['id'],))
+    bid=request.json['id']; conn=get_db(); c=conn.cursor()
+    c.execute("SELECT * FROM branches WHERE id=%s",(bid,)); old=row(c)
+    c.execute("DELETE FROM branches WHERE id=%s",(bid,))
+    if old:
+        log_audit(c, session['user_id'], 'branch_delete', entity_type='branch', entity_id=bid,
+                  before={'name':old['name'],'address':old['address']})
     conn.commit(); conn.close(); return jsonify({'ok':True})
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -426,9 +511,12 @@ def save_settings():
     if err: return err
     if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
     conn=get_db(); c=conn.cursor()
+    changes={}
     for k,v in request.json.items():
         if k=='smtp_pass' and not v: continue
         c.execute("INSERT INTO app_settings (key,value) VALUES (%s,%s) ON CONFLICT(key) DO UPDATE SET value=%s",(k,str(v),str(v)))
+        changes[k] = '***' if 'pass' in k.lower() else str(v)
+    log_audit(c, session['user_id'], 'settings_update', entity_type='settings', after=changes)
     conn.commit(); conn.close(); return jsonify({'ok':True})
 
 @app.route('/api/settings/test-email',methods=['POST'])
@@ -477,6 +565,9 @@ def apply_leave():
     c.execute("INSERT INTO leave_requests (user_id,leave_type_id,start_date,end_date,days,reason,dates_json) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
               (uid,data['leave_type_id'],start_date,end_date,days,data.get('reason',''),dates_json))
     req_id=row(c)['id']
+    log_audit(c, uid, 'leave_apply', entity_type='leave_request', entity_id=req_id,
+              after={'leave_type_id':data['leave_type_id'],'start_date':start_date,'end_date':end_date,
+                     'days':days,'dates':json.loads(dates_json) if dates_json else None,'reason':data.get('reason','')})
     conn.commit(); conn.close()
     try: notify_supervisor(req_id)
     except: pass
@@ -517,6 +608,7 @@ def leave_action():
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM leave_requests WHERE id=%s",(data['request_id'],)); req=row(c)
     if not req: conn.close(); return jsonify({'error':'Not found'}),404
+    before_status=req['status']
     c.execute("UPDATE leave_requests SET status=%s,approved_by=%s,approved_at=%s,remarks=%s WHERE id=%s",
               (action+'d',uid,now_local().isoformat(),data.get('remarks',''),data['request_id']))
     if action=='approve':
@@ -531,6 +623,9 @@ def leave_action():
                 d+=timedelta(days=1)
         for ds in leave_dates:
             c.execute("INSERT INTO attendance (user_id,date,status) VALUES (%s,%s,'leave') ON CONFLICT(user_id,date) DO UPDATE SET status='leave'",(req['user_id'],ds))
+    log_audit(c, uid, 'leave_'+action, entity_type='leave_request', entity_id=data['request_id'],
+              before={'status':before_status},
+              after={'status':action+'d','remarks':data.get('remarks',''),'target_user_id':req['user_id'],'days':float(req['days'])})
     conn.commit(); conn.close(); return jsonify({'ok':True})
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -565,6 +660,10 @@ def add_user():
         for lt in lts:
             c.execute("INSERT INTO leave_balances (user_id,leave_type_id,year,total_days) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                       (uid,lt['id'],yr,lt['max_days']))
+        log_audit(c, session['user_id'], 'user_create', entity_type='user', entity_id=uid,
+                  after={'employee_id':data['employee_id'],'name':full,'email':data['email'],
+                         'role':data.get('role','employee'),'department':data.get('department',''),
+                         'branch_id':data.get('branch_id'),'manager_id':data.get('manager_id')})
         conn.commit()
     except Exception as e: conn.rollback(); conn.close(); return jsonify({'error':str(e)}),400
     conn.close(); return jsonify({'ok':True})
@@ -577,15 +676,80 @@ def update_user():
     data=request.json; first=data.get('first_name','').strip(); last=data.get('last_name','').strip()
     full=f"{first} {last}".strip(); conn=get_db(); c=conn.cursor()
     try:
+        c.execute("SELECT first_name,last_name,name,email,role,department,branch_id,manager_id,shift_start,shift_end FROM users WHERE id=%s",(data['id'],))
+        old=row(c); old_d=dict(old) if old else {}
         c.execute("UPDATE users SET first_name=%s,last_name=%s,name=%s,email=%s,role=%s,department=%s,branch_id=%s,manager_id=%s,shift_start=%s,shift_end=%s WHERE id=%s",
                   (first,last,full,data['email'],data.get('role','employee'),data.get('department',''),
                    data.get('branch_id') or None,data.get('manager_id') or None,
                    data.get('shift_start','09:00'),data.get('shift_end','18:00'),data['id']))
+        new_d={'first_name':first,'last_name':last,'name':full,'email':data['email'],
+               'role':data.get('role','employee'),'department':data.get('department',''),
+               'branch_id':data.get('branch_id'),'manager_id':data.get('manager_id'),
+               'shift_start':data.get('shift_start','09:00'),'shift_end':data.get('shift_end','18:00')}
+        b,a=diff_dict(old_d, new_d)
+        if b: log_audit(c, session['user_id'], 'user_update', entity_type='user', entity_id=data['id'], before=b, after=a)
         if data.get('password'):
             c.execute("UPDATE users SET password=%s WHERE id=%s",(hash_password(data['password']),data['id']))
+            log_audit(c, session['user_id'], 'user_password_reset', entity_type='user', entity_id=data['id'])
         conn.commit()
     except Exception as e: conn.rollback(); conn.close(); return jsonify({'error':str(e)}),400
     conn.close(); return jsonify({'ok':True})
+
+# ── R1 Audit Log Endpoints (HR Admin only) ────────────────────────────────────
+@app.route('/api/audit-log')
+def audit_log_list():
+    err=require_login()
+    if err: return err
+    if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
+    try:
+        limit=min(int(request.args.get('limit',100)),500)
+        offset=max(int(request.args.get('offset',0)),0)
+    except (TypeError,ValueError):
+        return jsonify({'error':'Invalid limit/offset'}),400
+    filters=[]; params=[]
+    for arg,col in [('user_id','al.user_id'),('action','al.action'),('entity_type','al.entity_type')]:
+        v=request.args.get(arg)
+        if v: filters.append(f"{col}=%s"); params.append(v)
+    fd=request.args.get('from_date'); td=request.args.get('to_date')
+    if fd: filters.append("al.created_at>=%s"); params.append(fd)
+    if td: filters.append("al.created_at<(%s::date+INTERVAL '1 day')"); params.append(td)
+    where=("WHERE "+" AND ".join(filters)) if filters else ""
+    conn=get_db(); c=conn.cursor()
+    c.execute(f"SELECT COUNT(*) as cnt FROM audit_log al {where}",params)
+    total=c.fetchone()['cnt']
+    c.execute(f"""SELECT al.id,al.user_id,COALESCE(u.name,'(deleted)') as user_name,
+                         al.action,al.entity_type,al.entity_id,
+                         al.before_json,al.after_json,al.ip_address,al.user_agent,al.created_at
+                  FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+                  {where} ORDER BY al.created_at DESC LIMIT %s OFFSET %s""",params+[limit,offset])
+    data=[]
+    for r in rows(c):
+        data.append({'id':r['id'],'user_id':r['user_id'],'user_name':r['user_name'],
+                     'action':r['action'],'entity_type':r['entity_type'],'entity_id':r['entity_id'],
+                     'before':r['before_json'],'after':r['after_json'],
+                     'ip':r['ip_address'],'user_agent':r['user_agent'],
+                     'created_at':r['created_at'].isoformat() if r['created_at'] else None})
+    conn.close()
+    return jsonify({'total':total,'rows':data,'limit':limit,'offset':offset})
+
+@app.route('/api/audit-log/export')
+def audit_log_export():
+    err=require_login()
+    if err: return err
+    if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
+    conn=get_db(); c=conn.cursor()
+    c.execute("""SELECT al.id,COALESCE(u.name,'(deleted)') as user_name,
+                        al.action,al.entity_type,al.entity_id,al.ip_address,al.created_at
+                 FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+                 ORDER BY al.created_at DESC LIMIT 10000""")
+    out=io.StringIO(); w=csv.writer(out)
+    w.writerow(['ID','User','Action','Entity Type','Entity ID','IP','Timestamp (Jakarta)'])
+    for r in rows(c):
+        ts=r['created_at'].astimezone(ZoneInfo('Asia/Jakarta')).strftime('%Y-%m-%d %H:%M:%S') if r['created_at'] else ''
+        w.writerow([r['id'],r['user_name'],r['action'],r['entity_type'] or '',r['entity_id'] or '',r['ip_address'] or '',ts])
+    conn.close()
+    return Response(out.getvalue(),mimetype='text/csv',
+                    headers={'Content-Disposition':'attachment; filename=ontime_audit_log.csv'})
 
 # ── Serve ─────────────────────────────────────────────────────────────────────
 @app.route('/setup-db-workpulse-2026')
@@ -624,15 +788,16 @@ def set_overtime():
     conn = get_db(); c = conn.cursor()
     # Store planned_checkout in attendance notes JSON
     c.execute("SELECT notes FROM attendance WHERE user_id=%s AND date=%s", (uid, today))
-    row = c.fetchone()
+    row_data = c.fetchone()
     notes_data = {}
-    if row and row['notes']:
-        try: notes_data = json.loads(row['notes'])
+    if row_data and row_data['notes']:
+        try: notes_data = json.loads(row_data['notes'])
         except: notes_data = {}
     notes_data['planned_checkout'] = planned_out
     notes_data['overtime'] = True
     c.execute("UPDATE attendance SET notes=%s WHERE user_id=%s AND date=%s",
               (json.dumps(notes_data), uid, today))
+    log_audit(c, uid, 'overtime_set', entity_type='attendance', after={'planned_checkout':planned_out})
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'planned_checkout': planned_out})
 
@@ -653,6 +818,7 @@ def auto_checkout():
         conn.close(); return jsonify({'ok': True, 'already_done': True})
     c.execute("UPDATE attendance SET punch_out=%s WHERE user_id=%s AND date=%s",
               (checkout_time, uid, today))
+    log_audit(c, uid, 'auto_checkout', entity_type='attendance', entity_id=att['id'], after={'punch_out':checkout_time})
     conn.commit(); conn.close()
     return jsonify({'ok': True, 'punch_out': checkout_time})
 
@@ -709,6 +875,8 @@ def manual_checkout():
               (time_ + ':00', user_id, date_))
     if c.rowcount == 0:
         conn.close(); return jsonify({'error': 'Attendance record not found'}), 404
+    log_audit(c, session['user_id'], 'manual_checkout', entity_type='attendance',
+              after={'target_user_id':user_id,'date':date_,'punch_out':time_+':00'})
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
