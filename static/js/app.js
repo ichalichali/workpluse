@@ -1665,9 +1665,9 @@ async function acceptConsentAndContinue() {
 function renderDeletionRequests() {
   if (!state.user || state.user.role !== 'hr_admin') return renderLogin();
   
-  const container = document.getElementById('app');
+  const el = document.getElementById('page-content');
   if (!pdpState.deletionRequests.length) {
-    container.innerHTML = '<div style="padding:20px;text-align:center;color:#94a3b8">Tidak ada permintaan penghapusan akun</div>';
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:#94a3b8">Tidak ada permintaan penghapusan akun</div>';
     return;
   }
   
@@ -1698,7 +1698,7 @@ function renderDeletionRequests() {
   });
   
   html += '</tbody></table></div>';
-  container.innerHTML = html;
+  el.innerHTML = html;
 }
 
 function openDeletionReview(idx) {
@@ -2136,8 +2136,8 @@ function _auditEsc(s) {
 function renderPDP() {
   if (!state.user) return renderLogin();
   
-  const container = document.getElementById('app');
-  container.innerHTML = `
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
     <div style="max-width:800px;margin:0 auto;padding:20px">
       <h1 style="margin:0 0 24px">⚙️ Privasi & Data Saya</h1>
       
