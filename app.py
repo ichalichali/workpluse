@@ -563,16 +563,17 @@ def delete_branch():
 def get_settings():
     err=require_login()
     if err: return err
-    if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
+    # Allow all logged-in users to READ settings (needed for hand emoji thresholds, etc)
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT key,value FROM app_settings"); data=rows(c); conn.close()
     s={r['key']:r['value'] for r in data}; s.pop('smtp_pass',None)
-    return jsonify(s)
+    return jsonify(data=s)
 
 @app.route('/api/settings/save',methods=['POST'])
 def save_settings():
     err=require_login()
     if err: return err
+    # Only HR admins can WRITE settings
     if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
     conn=get_db(); c=conn.cursor()
     changes={}

@@ -6,6 +6,12 @@ const state = {
   pendingCount: 0,
 };
 
+// ── R3 · Hand Emoji State ────────────────────────────────────────────────────
+const handEmojiState = {
+  showQuoteAfterPunchIn: false,
+  quoteExpireTime: null,
+};
+
 // ── Initialize from localStorage ──────────────────────────────────────────────
 function initializeSession() {
   const saved = localStorage.getItem('ontime_user');
