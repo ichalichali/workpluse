@@ -6,6 +6,21 @@ const state = {
   pendingCount: 0,
 };
 
+// ── Initialize from localStorage ──────────────────────────────────────────────
+function initializeSession() {
+  const saved = localStorage.getItem('ontime_user');
+  if (saved) {
+    try {
+      state.user = JSON.parse(saved);
+      state.page = 'dashboard';
+    } catch (e) {
+      console.error('Failed to restore session:', e);
+      localStorage.removeItem('ontime_user');
+    }
+  }
+}
+
+
 // ── API helper ────────────────────────────────────────────────────────────────
 async function api(method, path, body) {
   const res = await fetch(`/api${path}`, {
@@ -57,7 +72,10 @@ function renderLogin() {
       </div>
       <div class="form-group">
         <label>Password</label>
-        <input id="login-pw" type="password" placeholder="••••••••" value="emp123"/>
+        <div style="position:relative;display:flex;align-items:center">
+          <input id="login-pw" type="password" placeholder="••••••••" value="emp123" style="flex:1;padding-right:40px"/>
+          <button type="button" onclick="togglePasswordVisibility()" style="position:absolute;right:10px;background:none;border:none;cursor:pointer;font-size:18px;color:#64748b" id="pw-toggle">👁️</button>
+        </div>
       </div>
       <div style="text-align:right;margin-bottom:20px;margin-top:-8px">
         <button class="link-btn" onclick="state.page='forgot';render()">Forgot password?</button>
@@ -91,12 +109,26 @@ async function doLogin() {
   state.user = r.data.user;
   state.punchStatus = r.data.punch_status;
   state.page = 'dashboard';
+  localStorage.setItem('ontime_user', JSON.stringify(state.user));
   await loadPendingCount();
   render();
 }
 
 // ── Forgot Password ───────────────────────────────────────────────────────────
-function renderForgot() {
+
+function togglePasswordVisibility() {
+  const input = document.getElementById('login-pw');
+  const btn = document.getElementById('pw-toggle');
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = '👁️‍🗨️';
+  } else {
+    input.type = 'password';
+    btn.textContent = '👁️';
+  }
+}
+
+// ── Forgot Password ) {
   document.getElementById('app').innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
@@ -251,6 +283,7 @@ async function loadPendingCount() {
 async function doLogout() {
   await api('POST', '/logout');
   state.user = null; state.page = 'login'; state.punchStatus = null;
+  localStorage.removeItem('ontime_user');
   render();
 }
 
@@ -1553,6 +1586,7 @@ function roleBadge(role) {
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
+initializeSession();
 render();
 
 // ── Reports Page ──────────────────────────────────────────────────────────────
