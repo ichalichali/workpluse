@@ -188,10 +188,10 @@ def init_db():
                 requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 reviewed_by INTEGER REFERENCES users(id),
                 reviewed_at TIMESTAMP WITH TIME ZONE,
-                review_notes TEXT,
-                UNIQUE(user_id, status) WHERE status='pending'
+                review_notes TEXT
             )
         """)
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_deletion_pending ON data_deletion_requests(user_id) WHERE status='pending'")
         c.execute("CREATE INDEX IF NOT EXISTS idx_deletion_user ON data_deletion_requests(user_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_deletion_status ON data_deletion_requests(status)")
         
