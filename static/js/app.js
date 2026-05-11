@@ -128,9 +128,9 @@ function togglePasswordVisibility() {
   }
 }
 
-// ── Forgot Password ) {
+// ── Forgot Password ───────────────────────────────────────────────────────
+function renderForgot() {
   document.getElementById('app').innerHTML = `
-  <div class="auth-wrap">
     <div class="auth-hero">
       <div class="hero-logo">
         <div class="hero-logo-icon">⏱</div>
