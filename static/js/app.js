@@ -377,8 +377,8 @@ async function renderDashboard() {
     // 👋 is anything in between
   };
   const handState = getHandEmoji(ontimePercent, thresholds);
-  const shouldShowQuote = shouldShowQuote(ontimePercent, thresholds) && handEmojiState.showQuoteAfterPunchIn;
-  const motivationalQuote = shouldShowQuote ? getRandomMotivationalQuote(state.user.id) : null;
+  const willShowQuote = shouldShowQuote(ontimePercent, thresholds) && handEmojiState.showQuoteAfterPunchIn;
+  const motivationalQuote = willShowQuote ? getRandomMotivationalQuote(state.user.id) : null;
   
   // Check if quote should expire
   if (handEmojiState.quoteExpireTime && Date.now() > handEmojiState.quoteExpireTime) {
@@ -407,7 +407,7 @@ async function renderDashboard() {
           <div class="punch-item"><div class="punch-item-val">${today.punch_in ? today.punch_in.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH IN</div></div>
           <div class="punch-item"><div class="punch-item-val">${today.punch_out ? today.punch_out.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH OUT</div></div>
           <div class="punch-item"><div class="punch-item-val">${handState.emoji} ${ontimePercent}%</div><div class="punch-item-lbl">STATUS</div></div>
-          ${shouldShowQuote ? `<div class="punch-item" style="background:rgba(255,255,255,0.08);border-left:3px solid #667eea;padding:12px 16px;border-radius:6px;font-size:13px;line-height:1.5;color:rgba(255,255,255,0.9);font-weight:500;flex:1;margin-left:16px">💡 ${motivationalQuote}</div>` : ''}
+          ${willShowQuote ? `<div class="punch-item" style="background:rgba(255,255,255,0.08);border-left:3px solid #667eea;padding:12px 16px;border-radius:6px;font-size:13px;line-height:1.5;color:rgba(255,255,255,0.9);font-weight:500;flex:1;margin-left:16px">💡 ${motivationalQuote}</div>` : ''}
         </div>
       </div>
       <div class="punch-actions" id="punch-actions">
