@@ -110,8 +110,15 @@ async function doLogin() {
   state.punchStatus = r.data.punch_status;
   state.page = 'dashboard';
   localStorage.setItem('ontime_user', JSON.stringify(state.user));
-  await loadPendingCount();
-  render();
+  
+  // R2: Check if user has accepted consent
+  if (r.data.consent_accepted === false) {
+    // Show consent modal instead of going to dashboard
+    showConsentModal();
+  } else {
+    await loadPendingCount();
+    render();
+  }
 }
 
 // ── Forgot Password ───────────────────────────────────────────────────────────
@@ -300,6 +307,13 @@ async function loadPage() {
     case 'settings':    return renderSettings();
     case 'reports':     return renderReports();
     case 'audit':       return renderAudit();
+    case 'pdp':         return renderPDP();
+    case 'deletion-requests': {
+      if (!pdpState.deletionRequests.length) {
+        await loadDeletionRequests();
+      }
+      return renderDeletionRequests();
+    }
   }
 }
 
@@ -1585,6 +1599,155 @@ function roleBadge(role) {
   return `<span class="badge ${cls}">${label}</span>`;
 }
 
+
+
+// ── Consent Modal & Acceptance ─────────────────────────────────────────────
+function showConsentModal() {
+  const modal = document.createElement('div');
+  modal.id = 'consent-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+  
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;width:90%;max-width:600px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:24px;border-bottom:1px solid #e2e8f0;background:#f8fafc">
+        <h2 style="margin:0;color:#0f172a">🔒 Kebijakan Privasi & Consent</h2>
+        <p style="margin:8px 0 0;color:#64748b;font-size:14px">Kami membutuhkan persetujuan Anda untuk memproses data pribadi sesuai UU PDP</p>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:24px;font-size:14px;color:#334155;line-height:1.6">
+        <h3 style="margin:0 0 12px;color:#0f172a">Data yang Kami Proses</h3>
+        <ul style="margin:0;padding-left:20px">
+          <li>Nama lengkap dan email kerja</li>
+          <li>Waktu punch in/out dan lokasi GPS</li>
+          <li>Riwayat permohonan cuti</li>
+          <li>Informasi departemen dan posisi</li>
+        </ul>
+        <h3 style="margin:20px 0 12px;color:#0f172a">Hak Anda</h3>
+        <ul style="margin:0;padding-left:20px">
+          <li><strong>Hak Akses:</strong> Download semua data pribadi Anda</li>
+          <li><strong>Hak Lupa:</strong> Minta penghapusan akun (diproses dalam 7 hari)</li>
+          <li><strong>Hak Koreksi:</strong> Hubungi HR untuk memperbarui data</li>
+        </ul>
+        <p style="margin:20px 0 0;border-top:1px solid #e2e8f0;padding-top:20px;font-size:12px;color:#94a3b8">
+          Dengan mengklik "Saya Setuju", Anda menerima <strong>Kebijakan Privasi</strong> kami dan memberikan consent untuk pemrosesan data pribadi sesuai dengan Undang-Undang Perlindungan Data Pribadi (UU PDP).
+        </p>
+      </div>
+      <div style="padding:20px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;gap:12px;justify-content:flex-end">
+        <button onclick="doLogout()" style="padding:10px 20px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;font-weight:600">Tolak & Logout</button>
+        <button onclick="acceptConsentAndContinue()" style="padding:10px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Saya Setuju</button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+}
+
+async function acceptConsentAndContinue() {
+  const r = await api('POST', '/consent/accept');
+  if (r.ok) {
+    document.getElementById('consent-modal').remove();
+    state.page = 'dashboard';
+    await loadPendingCount();
+    render();
+  } else {
+    alert('Gagal menyimpan consent. Silakan coba lagi.');
+  }
+}
+
+
+
+// ── HR Admin: Deletion Requests Review ─────────────────────────────────────
+function renderDeletionRequests() {
+  if (!state.user || state.user.role !== 'hr_admin') return renderLogin();
+  
+  const container = document.getElementById('main');
+  if (!pdpState.deletionRequests.length) {
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:#94a3b8">Tidak ada permintaan penghapusan akun</div>';
+    return;
+  }
+  
+  let html = '<div style="max-width:1000px;margin:0 auto;padding:20px"><h1 style="margin:0 0 20px">🗑️ Permintaan Penghapusan Akun</h1>';
+  html += '<table style="width:100%;border-collapse:collapse;font-size:14px">';
+  html += '<thead><tr style="background:#f1f5f9">';
+  html += '<th style="padding:12px;text-align:left;border-bottom:2px solid #cbd5e1">Nama</th>';
+  html += '<th style="padding:12px;text-align:left;border-bottom:2px solid #cbd5e1">Email</th>';
+  html += '<th style="padding:12px;text-align:left;border-bottom:2px solid #cbd5e1">Tanggal</th>';
+  html += '<th style="padding:12px;text-align:left;border-bottom:2px solid #cbd5e1">Status</th>';
+  html += '<th style="padding:12px;text-align:center;border-bottom:2px solid #cbd5e1">Aksi</th>';
+  html += '</tr></thead><tbody>';
+  
+  pdpState.deletionRequests.forEach((req, idx) => {
+    const status = req.status === 'pending' ? '⏳ Menunggu' : req.status === 'approved' ? '✅ Disetujui' : '❌ Ditolak';
+    const canAction = req.status === 'pending';
+    html += `<tr style="border-bottom:1px solid #e2e8f0">`;
+    html += `<td style="padding:12px">${req.u.name}</td>`;
+    html += `<td style="padding:12px">${req.u.email}</td>`;
+    html += `<td style="padding:12px">${new Date(req.requested_at).toLocaleDateString('id-ID')}</td>`;
+    html += `<td style="padding:12px">${status}</td>`;
+    html += `<td style="padding:12px;text-align:center">`;
+    if (canAction) {
+      html += `<button onclick="openDeletionReview(${idx})" style="padding:6px 12px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">Review</button>`;
+    }
+    html += `</td>`;
+    html += `</tr>`;
+  });
+  
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+function openDeletionReview(idx) {
+  const req = pdpState.deletionRequests[idx];
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.id = 'review-modal';
+  
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;width:90%;max-width:500px;padding:24px">
+      <h2 style="margin:0 0 16px;color:#0f172a">Review Permintaan Penghapusan</h2>
+      <p style="margin:0 0 8px;color:#64748b"><strong>Nama:</strong> ${req.u.name}</p>
+      <p style="margin:0 0 8px;color:#64748b"><strong>Email:</strong> ${req.u.email}</p>
+      <p style="margin:0 0 16px;color:#64748b"><strong>Alasan:</strong> ${req.reason || '-'}</p>
+      
+      <textarea id="review-notes" placeholder="Catatan review (opsional)" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;margin-bottom:16px;resize:vertical;min-height:80px"></textarea>
+      
+      <div style="display:flex;gap:12px">
+        <button onclick="reviewDeletion(${idx}, 'reject')" style="flex:1;padding:10px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Tolak</button>
+        <button onclick="reviewDeletion(${idx}, 'approve')" style="flex:1;padding:10px;background:#10b981;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Setujui</button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+}
+
+async function reviewDeletion(idx, action) {
+  const req = pdpState.deletionRequests[idx];
+  const notes = document.getElementById('review-notes').value;
+  
+  const r = await api('POST', '/admin/deletion-review', {
+    request_id: req.id,
+    action: action,
+    notes: notes
+  });
+  
+  if (r.ok) {
+    alert(action === 'approve' ? 'Permintaan disetujui. Data akan dihapus.' : 'Permintaan ditolak.');
+    document.getElementById('review-modal').remove();
+    await loadDeletionRequests();
+    renderDeletionRequests();
+  } else {
+    alert('Gagal: ' + (r.data?.error || 'Unknown error'));
+  }
+}
+
+async function loadDeletionRequests() {
+  const r = await api('GET', '/admin/deletion-requests');
+  if (r.ok) {
+    pdpState.deletionRequests = r.data.map(d => ({ ...d, u: { name: d.name, email: d.email } }));
+  }
+}
+
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 initializeSession();
 render();
@@ -1963,6 +2126,82 @@ function _auditEsc(s) {
                   .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+async 
+// ── PDP Profile Page (Data Download & Deletion Request) ────────────────────
+function renderPDP() {
+  if (!state.user) return renderLogin();
+  
+  const container = document.getElementById('main');
+  container.innerHTML = `
+    <div style="max-width:800px;margin:0 auto;padding:20px">
+      <h1 style="margin:0 0 24px">⚙️ Privasi & Data Saya</h1>
+      
+      <div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:20px;border-left:4px solid #2563eb">
+        <h3 style="margin:0 0 8px;color:#0f172a">✅ Data Anda Aman</h3>
+        <p style="margin:0;color:#64748b;font-size:14px">Data pribadi Anda dilindungi sesuai Undang-Undang Perlindungan Data Pribadi (UU PDP).</p>
+      </div>
+      
+      <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:20px;margin-bottom:20px">
+        <h3 style="margin:0 0 16px;color:#0f172a">📥 Download Data Pribadi Anda</h3>
+        <p style="margin:0 0 16px;color:#64748b;font-size:14px">Dapatkan salinan semua data pribadi yang kami simpan, termasuk riwayat absensi dan permohonan cuti.</p>
+        <button onclick="downloadUserData()" style="padding:10px 16px;background:#10b981;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">📥 Download Data (JSON)</button>
+      </div>
+      
+      <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:20px;margin-bottom:20px">
+        <h3 style="margin:0 0 8px;color:#0f172a">🗑️ Permintaan Penghapusan Akun</h3>
+        <p style="margin:8px 0 16px;color:#64748b;font-size:14px">Kirim permintaan untuk menghapus akun Anda. Kami akan memproses dalam 7 hari kerja. <strong>Tindakan ini tidak dapat dibatalkan.</strong></p>
+        <textarea id="delete-reason" placeholder="Alasan (opsional)" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:14px;margin-bottom:12px;resize:vertical;min-height:80px"></textarea>
+        <button onclick="requestDeletion()" style="padding:10px 16px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">🗑️ Minta Penghapusan Akun</button>
+      </div>
+      
+      <div style="background:#fef2f2;border-radius:12px;border:1px solid #fecaca;padding:16px;color:#991b1b;font-size:14px">
+        <strong>⚠️ Perhatian:</strong> Setelah permintaan diterima HR, data Anda akan dihapus secara permanen termasuk riwayat absensi dan cuti.
+      </div>
+    </div>
+  `;
+}
+
+async function downloadUserData() {
+  try {
+    const r = await api('GET', '/user/data');
+    if (r.ok) {
+      const data = r.data;
+      const json = JSON.stringify(data, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `data-pribadi-${state.user.employee_id}-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else {
+      alert('Gagal mengunduh data: ' + (r.data?.error || 'Unknown error'));
+    }
+  } catch (err) {
+    console.error('Download error:', err);
+    alert('Gagal mengunduh data');
+  }
+}
+
+async function requestDeletion() {
+  const reason = document.getElementById('delete-reason').value;
+  if (!confirm('Apakah Anda yakin ingin meminta penghapusan akun? Tindakan ini tidak dapat dibatalkan.')) {
+    return;
+  }
+  
+  const r = await api('POST', '/user/delete-request', { reason });
+  if (r.ok) {
+    alert('Permintaan penghapusan akun telah dikirim. Tim HR akan meninjau dalam 7 hari kerja.');
+    state.page = 'dashboard';
+    render();
+  } else {
+    alert('Gagal mengirim permintaan: ' + (r.data?.error || r.data?.message || 'Unknown error'));
+  }
+}
+
+
 async function renderAudit() {
   const el = document.getElementById('page-content');
   el.innerHTML = `
@@ -2194,3 +2433,9 @@ function auditDetail(idx) {
 function auditExportCSV() {
   window.location.href = '/api/audit-log/export';
 }
+
+// ── R2 · Consent & Data Privacy ────────────────────────────────────────────
+const pdpState = { showModal: false, deleteReason: '', deletionRequests: [] };
+
+const PRIVACY_POLICY_ID = 'id-privacy-policy';
+const CURRENT_CONSENT_VERSION = '2026-05-v1';

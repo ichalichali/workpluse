@@ -18,6 +18,9 @@ def today_local():
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
+# ── R2 Constants ───────────────────────────────────────────────────────────
+CURRENT_CONSENT_VERSION = '2026-05-v1'
+
 @app.after_request
 def add_cors(response):
     response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
@@ -325,11 +328,17 @@ def login():
     log_audit(c, user['id'], 'login_success', entity_type='user', entity_id=user['id'])
     c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s",(user['id'],today_local().isoformat()))
     att=row(c); conn.commit(); conn.close()
+    # Get consent status
+    c.execute("""SELECT accepted FROM consent_log 
+                 WHERE user_id=%s AND version=%s AND accepted=true 
+                 ORDER BY accepted_at DESC LIMIT 1""",
+              (user['id'], CURRENT_CONSENT_VERSION))
+    consent_accepted = bool(c.fetchone())
     punch_status=att['status'] if att else ('not_punched' if today_local().weekday()<5 else None)
     return jsonify({'user':{'id':user['id'],'name':user['name'],'first_name':user['first_name'],'last_name':user['last_name'],
         'email':user['email'],'role':user['role'],'employee_id':user['employee_id'],
         'department':user['department'],'shift_start':user['shift_start'],'shift_end':user['shift_end'],
-        'branch_id':user['branch_id']},'punch_status':punch_status})
+        'branch_id':user['branch_id']},'punch_status':punch_status,'consent_accepted':consent_accepted})
 
 @app.route('/api/logout',methods=['POST'])
 def logout():
@@ -925,6 +934,170 @@ except Exception as e:
 if __name__=='__main__':
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT',5000)))
 
+
+# ── R2 · Consent & Data Privacy (UU PDP) ──────────────────────────────────
+@app.route('/api/consent/accept', methods=['POST'])
+def accept_consent():
+    """Accept privacy policy and consent to data processing."""
+    err = require_login()
+    if err: return err
+    uid = session['user_id']
+    conn = get_db(); c = conn.cursor()
+    c.execute("""INSERT INTO consent_log (user_id, consent_type, version, accepted, ip_address)
+                 VALUES (%s, 'privacy_policy', %s, %s, %s)""",
+              (uid, CURRENT_CONSENT_VERSION, True, request.remote_addr))
+    log_audit(c, uid, 'consent_accepted', entity_type='consent', entity_id=uid,
+              after={'version': CURRENT_CONSENT_VERSION})
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/user/consent-status')
+def get_consent_status():
+    """Check if user has accepted current privacy policy version."""
+    err = require_login()
+    if err: return err
+    uid = session['user_id']
+    conn = get_db(); c = conn.cursor()
+    c.execute("""SELECT accepted FROM consent_log 
+                 WHERE user_id=%s AND version=%s AND accepted=true 
+                 ORDER BY accepted_at DESC LIMIT 1""",
+              (uid, CURRENT_CONSENT_VERSION))
+    result = c.fetchone()
+    conn.close()
+    return jsonify({'accepted': bool(result)})
+
+@app.route('/api/user/data')
+def export_user_data():
+    """Export user's personal data (GDPR/UU PDP right to access)."""
+    err = require_login()
+    if err: return err
+    uid = session['user_id']
+    conn = get_db(); c = conn.cursor()
+    
+    # User profile
+    c.execute("""SELECT id, employee_id, first_name, last_name, email, role, department, 
+                        shift_start, shift_end, created_at FROM users WHERE id=%s""", (uid,))
+    user = c.fetchone()
+    
+    # Attendance records
+    c.execute("""SELECT date, punch_in, punch_out, status, geo_in, geo_out FROM attendance 
+                 WHERE user_id=%s AND deleted_at IS NULL ORDER BY date DESC""", (uid,))
+    attendance = [dict(r) for r in c.fetchall()]
+    
+    # Leave requests
+    c.execute("""SELECT lr.start_date, lr.end_date, lr.days, lt.name as leave_type, 
+                        lr.status, lr.reason, lr.created_at
+                 FROM leave_requests lr JOIN leave_types lt ON lr.leave_type_id=lt.id
+                 WHERE lr.user_id=%s AND lr.deleted_at IS NULL ORDER BY lr.created_at DESC""", (uid,))
+    leaves = [dict(r) for r in c.fetchall()]
+    
+    # Consent history
+    c.execute("""SELECT consent_type, version, accepted, accepted_at FROM consent_log 
+                 WHERE user_id=%s ORDER BY accepted_at DESC""", (uid,))
+    consents = [dict(r) for r in c.fetchall()]
+    
+    c.execute("SELECT * FROM users WHERE id=%s", (uid,))
+    user_for_audit = c.fetchone()
+    log_audit(c, uid, 'data_export_requested', entity_type='user', entity_id=uid)
+    conn.commit(); conn.close()
+    
+    # Return as JSON (user can download via browser)
+    export_data = {
+        'exported_at': now_local().isoformat(),
+        'user': dict(user) if user else None,
+        'attendance': attendance,
+        'leave_requests': leaves,
+        'consent_history': consents
+    }
+    
+    return jsonify(export_data)
+
+@app.route('/api/user/delete-request', methods=['POST'])
+def request_deletion():
+    """User requests account deletion (right to be forgotten)."""
+    err = require_login()
+    if err: return err
+    uid = session['user_id']
+    reason = request.json.get('reason', '')
+    conn = get_db(); c = conn.cursor()
+    
+    # Check if already pending
+    c.execute("SELECT id FROM data_deletion_requests WHERE user_id=%s AND status='pending'", (uid,))
+    if c.fetchone():
+        conn.close()
+        return jsonify({'error': 'Deletion request sudah dalam proses'}), 400
+    
+    c.execute("""INSERT INTO data_deletion_requests (user_id, reason, status) 
+                 VALUES (%s, %s, 'pending')""", (uid, reason))
+    log_audit(c, uid, 'deletion_request_submitted', entity_type='user', entity_id=uid,
+              after={'reason': reason})
+    conn.commit(); conn.close()
+    return jsonify({'ok': True, 'message': 'Permintaan penghapusan akun diterima. Tim HR akan meninjau dalam 7 hari.'})
+
+@app.route('/api/admin/deletion-requests')
+def list_deletion_requests():
+    """HR Admin view pending deletion requests."""
+    err = require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    conn = get_db(); c = conn.cursor()
+    c.execute("""SELECT dr.id, dr.user_id, u.name, u.email, u.employee_id, 
+                        dr.reason, dr.status, dr.requested_at, dr.reviewed_at, dr.review_notes
+                 FROM data_deletion_requests dr JOIN users u ON u.id=dr.user_id
+                 WHERE dr.status IN ('pending', 'approved') 
+                 ORDER BY dr.requested_at DESC""")
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return jsonify(rows)
+
+@app.route('/api/admin/deletion-review', methods=['POST'])
+def review_deletion():
+    """HR Admin approve or reject deletion request."""
+    err = require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    data = request.json
+    req_id = data['request_id']
+    action = data['action']  # 'approve' or 'reject'
+    notes = data.get('notes', '')
+    
+    if action not in ('approve', 'reject'):
+        return jsonify({'error': 'Invalid action'}), 400
+    
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT user_id FROM data_deletion_requests WHERE id=%s", (req_id,))
+    req = c.fetchone()
+    if not req:
+        conn.close()
+        return jsonify({'error': 'Request not found'}), 404
+    
+    target_user_id = req['user_id']
+    new_status = 'approved' if action == 'approve' else 'rejected'
+    
+    c.execute("""UPDATE data_deletion_requests 
+                 SET status=%s, reviewed_by=%s, reviewed_at=%s, review_notes=%s 
+                 WHERE id=%s""",
+              (new_status, session['user_id'], now_local().isoformat(), notes, req_id))
+    
+    # If approved, soft-delete the user and their data
+    if action == 'approve':
+        delete_time = now_local().isoformat()
+        c.execute("UPDATE users SET deleted_at=%s WHERE id=%s", (delete_time, target_user_id))
+        c.execute("UPDATE attendance SET deleted_at=%s WHERE user_id=%s", (delete_time, target_user_id))
+        c.execute("UPDATE leave_requests SET deleted_at=%s WHERE user_id=%s", (delete_time, target_user_id))
+        log_audit(c, session['user_id'], 'user_deletion_approved', entity_type='user', 
+                  entity_id=target_user_id, after={'deleted_at': delete_time})
+    else:
+        log_audit(c, session['user_id'], 'user_deletion_rejected', entity_type='user',
+                  entity_id=target_user_id, after={'rejection_notes': notes})
+    
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
 # ── Reports API ───────────────────────────────────────────────────────────────
 @app.route('/api/reports/my-attendance')
 def report_my_attendance():
@@ -1004,3 +1177,48 @@ def report_team_attendance():
     depts = [r['department'] for r in c.fetchall()]
     conn.close()
     return jsonify({'attendance':[dict(r) for r in att_rows],'leaves':[dict(r) for r in leave_rows],'departments':depts})
+
+    # Release 2 · UU PDP Compliance (Indonesian Privacy Law)
+    try:
+        # Soft-delete tracking
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
+        c.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
+        c.execute("ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
+        
+        # Consent tracking
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS consent_log (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                consent_type TEXT NOT NULL,
+                version TEXT NOT NULL,
+                accepted BOOLEAN NOT NULL,
+                ip_address TEXT,
+                accepted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_consent_user ON consent_log(user_id)")
+        
+        # Data deletion requests
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS data_deletion_requests (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                reason TEXT,
+                status TEXT DEFAULT 'pending',
+                requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                reviewed_by INTEGER REFERENCES users(id),
+                reviewed_at TIMESTAMP WITH TIME ZONE,
+                review_notes TEXT,
+                UNIQUE(user_id, status) WHERE status='pending'
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_deletion_user ON data_deletion_requests(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_deletion_status ON data_deletion_requests(status)")
+        
+        c.execute("INSERT INTO schema_migrations (release_id, notes) VALUES ('R2_uu_pdp', 'Phase 1 - UU PDP Compliance') ON CONFLICT DO NOTHING")
+        conn.commit()
+        print("[init_db] R2 UU PDP applied")
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] R2 FAILED: {e}")
