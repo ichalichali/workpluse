@@ -155,6 +155,51 @@ def init_db():
         conn.rollback()
         print(f"[init_db] R1 FAILED: {e}")
 
+    # Release 2 · UU PDP Compliance (Indonesian Privacy Law)
+    try:
+        # Soft-delete tracking
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
+        c.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
+        c.execute("ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
+        
+        # Consent tracking
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS consent_log (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                consent_type TEXT NOT NULL,
+                version TEXT NOT NULL,
+                accepted BOOLEAN NOT NULL,
+                ip_address TEXT,
+                accepted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_consent_user ON consent_log(user_id)")
+        
+        # Data deletion requests
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS data_deletion_requests (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                reason TEXT,
+                status TEXT DEFAULT 'pending',
+                requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                reviewed_by INTEGER REFERENCES users(id),
+                reviewed_at TIMESTAMP WITH TIME ZONE,
+                review_notes TEXT,
+                UNIQUE(user_id, status) WHERE status='pending'
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_deletion_user ON data_deletion_requests(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_deletion_status ON data_deletion_requests(status)")
+        
+        c.execute("INSERT INTO schema_migrations (release_id, notes) VALUES ('R2_uu_pdp', 'Phase 1 - UU PDP Compliance') ON CONFLICT DO NOTHING")
+        conn.commit()
+        print("[init_db] R2 UU PDP applied")
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] R2 FAILED: {e}")
+
     # Seed leave types
     c.execute("SELECT COUNT(*) as cnt FROM leave_types")
     if c.fetchone()['cnt'] == 0:
@@ -1191,48 +1236,3 @@ def report_team_attendance():
     depts = [r['department'] for r in c.fetchall()]
     conn.close()
     return jsonify({'attendance':[dict(r) for r in att_rows],'leaves':[dict(r) for r in leave_rows],'departments':depts})
-
-    # Release 2 · UU PDP Compliance (Indonesian Privacy Law)
-    try:
-        # Soft-delete tracking
-        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
-        c.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
-        c.execute("ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE")
-        
-        # Consent tracking
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS consent_log (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                consent_type TEXT NOT NULL,
-                version TEXT NOT NULL,
-                accepted BOOLEAN NOT NULL,
-                ip_address TEXT,
-                accepted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            )
-        """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_consent_user ON consent_log(user_id)")
-        
-        # Data deletion requests
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS data_deletion_requests (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                reason TEXT,
-                status TEXT DEFAULT 'pending',
-                requested_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                reviewed_by INTEGER REFERENCES users(id),
-                reviewed_at TIMESTAMP WITH TIME ZONE,
-                review_notes TEXT,
-                UNIQUE(user_id, status) WHERE status='pending'
-            )
-        """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_deletion_user ON data_deletion_requests(user_id)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_deletion_status ON data_deletion_requests(status)")
-        
-        c.execute("INSERT INTO schema_migrations (release_id, notes) VALUES ('R2_uu_pdp', 'Phase 1 - UU PDP Compliance') ON CONFLICT DO NOTHING")
-        conn.commit()
-        print("[init_db] R2 UU PDP applied")
-    except Exception as e:
-        conn.rollback()
-        print(f"[init_db] R2 FAILED: {e}")
