@@ -947,15 +947,23 @@ def accept_consent():
     """Accept privacy policy and consent to data processing."""
     err = require_login()
     if err: return err
-    uid = session['user_id']
-    conn = get_db(); c = conn.cursor()
-    c.execute("""INSERT INTO consent_log (user_id, consent_type, version, accepted, ip_address)
-                 VALUES (%s, 'privacy_policy', %s, %s, %s)""",
-              (uid, CURRENT_CONSENT_VERSION, True, request.remote_addr))
-    log_audit(c, uid, 'consent_accepted', entity_type='consent', entity_id=uid,
-              after={'version': CURRENT_CONSENT_VERSION})
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+    try:
+        uid = session['user_id']
+        conn = get_db(); c = conn.cursor()
+        c.execute("""INSERT INTO consent_log (user_id, consent_type, version, accepted, ip_address)
+                     VALUES (%s, 'privacy_policy', %s, %s, %s)""",
+                  (uid, CURRENT_CONSENT_VERSION, True, request.remote_addr))
+        # Try to log audit, but don't fail if it errors
+        try:
+            log_audit(c, uid, 'consent_accepted', entity_type='consent', entity_id=uid,
+                      after={'version': CURRENT_CONSENT_VERSION})
+        except Exception as audit_err:
+            print(f"[accept_consent] Audit log failed: {audit_err}")
+        conn.commit(); conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        print(f"[accept_consent] Error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/user/consent-status')
 def get_consent_status():
