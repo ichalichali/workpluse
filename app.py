@@ -327,13 +327,14 @@ def login():
     session['user_id']=user['id']; session['role']=user['role']
     log_audit(c, user['id'], 'login_success', entity_type='user', entity_id=user['id'])
     c.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s",(user['id'],today_local().isoformat()))
-    att=row(c); conn.commit(); conn.close()
-    # Get consent status
+    att=row(c)
+    # Get consent status (before closing connection)
     c.execute("""SELECT accepted FROM consent_log 
                  WHERE user_id=%s AND version=%s AND accepted=true 
                  ORDER BY accepted_at DESC LIMIT 1""",
               (user['id'], CURRENT_CONSENT_VERSION))
     consent_accepted = bool(c.fetchone())
+    conn.commit(); conn.close()
     punch_status=att['status'] if att else ('not_punched' if today_local().weekday()<5 else None)
     return jsonify({'user':{'id':user['id'],'name':user['name'],'first_name':user['first_name'],'last_name':user['last_name'],
         'email':user['email'],'role':user['role'],'employee_id':user['employee_id'],
