@@ -2126,7 +2126,6 @@ function _auditEsc(s) {
                   .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-async 
 // ── PDP Profile Page (Data Download & Deletion Request) ────────────────────
 function renderPDP() {
   if (!state.user) return renderLogin();
