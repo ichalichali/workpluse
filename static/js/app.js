@@ -343,11 +343,22 @@ async function renderDashboard() {
   const att   = attR.data;
   const settings = settingsR.data || {};
   
-  // R3: Calculate on-time % and quote threshold
+  // R3: Calculate on-time % and three-tier hand emoji thresholds
   const ontimePercent = calculateOntimePercentage(sum);
-  const quoteThreshold = parseInt(settings.quote_threshold || '60', 10);
-  const shouldShowQuote = ontimePercent < quoteThreshold;
+  const thresholds = {
+    lower: parseInt(settings.thumb_down_threshold || '40', 10),  // 👎 if < this
+    upper: parseInt(settings.thumb_up_threshold || '80', 10),    // 👍 if >= this
+    // 👋 is anything in between
+  };
+  const handState = getHandEmoji(ontimePercent, thresholds);
+  const shouldShowQuote = shouldShowQuote(ontimePercent, thresholds) && handEmojiState.showQuoteAfterPunchIn;
   const motivationalQuote = shouldShowQuote ? getRandomMotivationalQuote(state.user.id) : null;
+  
+  // Check if quote should expire
+  if (handEmojiState.quoteExpireTime && Date.now() > handEmojiState.quoteExpireTime) {
+    handEmojiState.showQuoteAfterPunchIn = false;
+    handEmojiState.quoteExpireTime = null;
+  }
 
   const notPunched = !today.punch_in && isWeekday() && state.punchStatus !== 'leave';
   const alertHtml = notPunched ? `
@@ -369,7 +380,8 @@ async function renderDashboard() {
         <div class="punch-status">
           <div class="punch-item"><div class="punch-item-val">${today.punch_in ? today.punch_in.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH IN</div></div>
           <div class="punch-item"><div class="punch-item-val">${today.punch_out ? today.punch_out.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH OUT</div></div>
-          <div class="punch-item"><div class="punch-item-val">👍 ${ontimePercent}%</div><div class="punch-item-lbl">ON-TIME</div></div>
+          <div class="punch-item"><div class="punch-item-val">${handState.emoji} ${ontimePercent}%</div><div class="punch-item-lbl">STATUS</div></div>
+          ${shouldShowQuote ? `<div class="punch-item" style="background:rgba(255,255,255,0.08);border-left:3px solid #667eea;padding:12px 16px;border-radius:6px;font-size:13px;line-height:1.5;color:rgba(255,255,255,0.9);font-weight:500;flex:1;margin-left:16px">💡 ${motivationalQuote}</div>` : ''}
         </div>
       </div>
       <div class="punch-actions" id="punch-actions">
@@ -377,21 +389,12 @@ async function renderDashboard() {
       </div>
     </div>
 
-    ${shouldShowQuote ? `
-    <div style="display:grid;grid-template-columns:1fr auto;gap:16px;margin-bottom:24px">
-      <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num">${sum.ontime||0}</div><div class="stat-label">On-time this month</div></div></div>
-      <div class="card" style="padding:20px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:white;border-radius:12px;min-width:300px">
-        <div style="text-align:center;font-size:16px;line-height:1.6;font-weight:500">💡 ${motivationalQuote}</div>
-      </div>
-    </div>
-    ` : `
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num">${sum.ontime||0}</div><div class="stat-label">On-time this month</div></div></div>
       <div class="stat-card"><div class="stat-icon yellow">⏰</div><div><div class="stat-num">${sum.late||0}</div><div class="stat-label">Late this month</div></div></div>
       <div class="stat-card"><div class="stat-icon red">❌</div><div><div class="stat-num">${sum.absent||0}</div><div class="stat-label">Absences</div></div></div>
       <div class="stat-card"><div class="stat-icon purple">🏖</div><div><div class="stat-num">${sum.leave||0}</div><div class="stat-label">Leave days taken</div></div></div>
     </div>
-    `}
 
     <div class="grid-2">
       <div class="card">
@@ -461,6 +464,11 @@ async function doPunchIn() {
   state.punchStatus = r.data.status;
   const distMsg = r.data.distance != null ? ` · ${r.data.distance}m from office` : '';
   showToast('success', `Punched in — ${r.data.status}${distMsg}`);
+  
+  // R3: Trigger quote display for 10 seconds after punch-in
+  handEmojiState.showQuoteAfterPunchIn = true;
+  handEmojiState.quoteExpireTime = Date.now() + 10000;
+  
   await renderDashboard();
 }
 
@@ -474,6 +482,11 @@ async function doPunchOut() {
   }
   const distMsg = r.data.distance != null ? ` · ${r.data.distance}m from office` : '';
   showToast('success', `Punched out successfully${distMsg}`);
+  
+  // R3: Clear quote display after punch-out
+  handEmojiState.showQuoteAfterPunchIn = false;
+  handEmojiState.quoteExpireTime = null;
+  
   await renderDashboard();
 }
 
@@ -1460,18 +1473,49 @@ async function renderSettings() {
           </div>
         </div>
         <div class="card mb-4">
-          <div class="card-header"><h3>💡 Motivational Quotes</h3></div>
+          <div class="card-header"><h3>💡 Motivational Quotes & Hand Emoji</h3></div>
           <div class="card-body">
-            <p class="text-sm text-muted" style="margin-bottom:12px">Show motivational quotes to employees with below-average on-time rates.</p>
-            <div class="form-group">
-              <label>On-time % Threshold (show quote if below)</label>
-              <div style="display:flex;gap:10px;align-items:center">
-                <input id="s-quote-threshold" type="number" min="0" max="100" value="${s.quote_threshold || '60'}" style="width:80px"/>
-                <span style="font-size:14px;color:#64748b">%</span>
+            <p class="text-sm text-muted" style="margin-bottom:16px">Set thresholds for hand emoji status and quote display.</p>
+            
+            <div style="margin-bottom:20px">
+              <label style="display:block;margin-bottom:8px;font-weight:600;font-size:14px">On-Time Percentage Thresholds</label>
+              <p class="text-sm text-muted" style="margin-bottom:12px">👎 Below left threshold | 👋 Between | 👍 Above right threshold</p>
+              
+              <div style="position:relative;margin:30px 0;padding:20px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid rgba(255,255,255,0.1)">
+                <!-- Slider track -->
+                <div style="position:relative;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;margin-bottom:20px;cursor:pointer" id="threshold-track" onclick="handleSliderClick(event)">
+                  <!-- Filled range -->
+                  <div style="position:absolute;height:100%;background:linear-gradient(to right, #ef4444, #eab308, #22c55e);border-radius:3px" id="threshold-fill"></div>
+                  
+                  <!-- Left handle (👎) -->
+                  <div style="position:absolute;top:-6px;width:20px;height:20px;background:#ef4444;border:2px solid white;border-radius:50%;cursor:grab;user-select:none" id="threshold-lower" draggable="true" onmousedown="startDrag(event, 'lower')"></div>
+                  
+                  <!-- Right handle (👍) -->
+                  <div style="position:absolute;top:-6px;width:20px;height:20px;background:#22c55e;border:2px solid white;border-radius:50%;cursor:grab;user-select:none" id="threshold-upper" draggable="true" onmousedown="startDrag(event, 'upper')"></div>
+                </div>
+                
+                <!-- Labels -->
+                <div style="display:grid;grid-template-columns:repeat(11,1fr);gap:0;font-size:10px;color:rgba(255,255,255,0.5);text-align:center">
+                  ${[0,10,20,30,40,50,60,70,80,90,100].map(i => `<div>${i}</div>`).join('')}
+                </div>
               </div>
-              <p class="text-sm text-muted" style="margin-top:8px">Default: 60%. Employees with on-time rate below this will see a motivational quote card on their dashboard.</p>
+              
+              <!-- Value display -->
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+                <div>
+                  <label style="font-size:13px;color:rgba(255,255,255,0.7);display:block;margin-bottom:4px">👎 Thumbs Down Below</label>
+                  <div style="font-size:20px;font-weight:700;color:#ef4444"><span id="thumb-down-val">${s.thumb_down_threshold || '40'}</span>%</div>
+                </div>
+                <div>
+                  <label style="font-size:13px;color:rgba(255,255,255,0.7);display:block;margin-bottom:4px">👍 Thumbs Up Above</label>
+                  <div style="font-size:20px;font-weight:700;color:#22c55e"><span id="thumb-up-val">${s.thumb_up_threshold || '80'}</span>%</div>
+                </div>
+              </div>
+              
+              <p class="text-sm text-muted" style="margin-top:12px">• 👎 Employees below left threshold see motivational quotes for 10 seconds after punch-in<br>• 👋 Employees between thresholds see wave emoji (no quote)<br>• 👍 Employees above right threshold see thumbs up (excellent!)</p>
             </div>
-            <button class="btn btn-primary" onclick="saveQuoteSettings()">Save Quote Settings</button>
+            
+            <button class="btn btn-primary" onclick="saveThresholdSettings()">Save Thresholds</button>
           </div>
         </div>
       </div>
@@ -1499,17 +1543,109 @@ async function saveGeoSettings() {
   else showToast('error', r.data.error);
 }
 
-async function saveQuoteSettings() {
-  const threshold = parseInt(document.getElementById('s-quote-threshold').value || '60', 10);
-  if (threshold < 0 || threshold > 100) {
-    showToast('error', 'Quote threshold must be between 0 and 100');
+async function saveThresholdSettings() {
+  const lower = parseInt(document.getElementById('thumb-down-val').textContent, 10);
+  const upper = parseInt(document.getElementById('thumb-up-val').textContent, 10);
+  
+  if (lower >= upper) {
+    showToast('error', 'Thumbs Down threshold must be less than Thumbs Up threshold');
     return;
   }
-  const data = { quote_threshold: String(threshold) };
+  if (lower < 0 || upper > 100) {
+    showToast('error', 'Thresholds must be between 0 and 100');
+    return;
+  }
+  
+  const data = {
+    thumb_down_threshold: String(lower),
+    thumb_up_threshold: String(upper),
+  };
   const r = await api('POST', '/settings/save', data);
-  if (r.ok) showToast('success', 'Quote settings saved');
+  if (r.ok) showToast('success', 'Thresholds saved');
   else showToast('error', r.data.error);
 }
+
+let dragState = { active: null, startX: 0, startVal: 0 };
+
+function startDrag(e, handle) {
+  dragState.active = handle;
+  dragState.startX = e.clientX || e.touches?.[0]?.clientX;
+  dragState.startVal = parseInt(document.getElementById(`thumb-${handle === 'lower' ? 'down' : 'up'}-val`).textContent, 10);
+  
+  document.addEventListener('mousemove', handleDrag);
+  document.addEventListener('mouseup', stopDrag);
+  e.preventDefault();
+}
+
+function stopDrag() {
+  dragState.active = null;
+  document.removeEventListener('mousemove', handleDrag);
+  document.removeEventListener('mouseup', stopDrag);
+  updateSliderUI();
+}
+
+function handleDrag(e) {
+  if (!dragState.active) return;
+  
+  const track = document.getElementById('threshold-track');
+  const trackRect = track.getBoundingClientRect();
+  const currentX = e.clientX;
+  const moveX = currentX - dragState.startX;
+  const pxPerPercent = trackRect.width / 100;
+  const movePercent = Math.round(moveX / pxPerPercent);
+  const newVal = Math.max(0, Math.min(100, dragState.startVal + movePercent));
+  
+  const lowerVal = parseInt(document.getElementById('thumb-down-val').textContent, 10);
+  const upperVal = parseInt(document.getElementById('thumb-up-val').textContent, 10);
+  
+  if (dragState.active === 'lower') {
+    if (newVal < upperVal) document.getElementById('thumb-down-val').textContent = newVal;
+  } else {
+    if (newVal > lowerVal) document.getElementById('thumb-up-val').textContent = newVal;
+  }
+  
+  updateSliderUI();
+}
+
+function handleSliderClick(e) {
+  const track = document.getElementById('threshold-track');
+  const trackRect = track.getBoundingClientRect();
+  const clickX = e.clientX - trackRect.left;
+  const clickPercent = Math.round((clickX / trackRect.width) * 100);
+  
+  const lowerVal = parseInt(document.getElementById('thumb-down-val').textContent, 10);
+  const upperVal = parseInt(document.getElementById('thumb-up-val').textContent, 10);
+  const midpoint = (lowerVal + upperVal) / 2;
+  
+  if (clickPercent < midpoint && clickPercent < upperVal) {
+    document.getElementById('thumb-down-val').textContent = Math.max(0, Math.min(clickPercent, upperVal - 1));
+  } else if (clickPercent > midpoint && clickPercent > lowerVal) {
+    document.getElementById('thumb-up-val').textContent = Math.min(100, Math.max(clickPercent, lowerVal + 1));
+  }
+  
+  updateSliderUI();
+}
+
+function updateSliderUI() {
+  const lower = parseInt(document.getElementById('thumb-down-val').textContent, 10);
+  const upper = parseInt(document.getElementById('thumb-up-val').textContent, 10);
+  const lowerHandle = document.getElementById('threshold-lower');
+  const upperHandle = document.getElementById('threshold-upper');
+  const fillBar = document.getElementById('threshold-fill');
+  
+  const lowerPercent = lower;
+  const upperPercent = upper;
+  const trackWidth = document.getElementById('threshold-track').offsetWidth;
+  
+  lowerHandle.style.left = `calc(${lowerPercent}% - 10px)`;
+  upperHandle.style.left = `calc(${upperPercent}% - 10px)`;
+  fillBar.style.left = `${lowerPercent}%`;
+  fillBar.style.width = `${upperPercent - lowerPercent}%`;
+}
+
+// Initialize slider on page load
+document.addEventListener('DOMContentLoaded', () => setTimeout(updateSliderUI, 100));
+
 
 async function testEmail() {
   const to = prompt('Send test email to:');
@@ -2600,4 +2736,20 @@ function getRandomMotivationalQuote(userId) {
   const seed = (userId || Math.random()) * 9999;
   const idx = Math.floor(seed % MOTIVATIONAL_QUOTES.length);
   return MOTIVATIONAL_QUOTES[idx];
+}
+
+function getHandEmoji(ontimePercent, thresholds) {
+  // thresholds = { lower: 40, upper: 80 }
+  // < lower = 👎, between = 👋, >= upper = 👍
+  const lower = thresholds.lower || 40;
+  const upper = thresholds.upper || 80;
+  
+  if (ontimePercent < lower) return { emoji: '👎', label: 'Below Average' };
+  if (ontimePercent >= upper) return { emoji: '👍', label: 'Excellent' };
+  return { emoji: '👋', label: 'Average' };
+}
+
+function shouldShowQuote(ontimePercent, thresholds) {
+  const lower = thresholds.lower || 40;
+  return ontimePercent < lower; // Show quote only if thumbs down
 }
