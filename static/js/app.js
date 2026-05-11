@@ -231,6 +231,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='reports'?'active':''}" onclick="navigate('reports')">
           <span class="nav-icon">📊</span> Reports
         </button>
+        <button class="nav-item ${state.page==='pdp'?'active':''}" onclick="navigate('pdp')">
+          <span class="nav-icon">🔒</span> Profil & Privasi
+        </button>
       </div>
       ${isManager ? `
       <div class="sidebar-section">
@@ -257,6 +260,9 @@ function renderShell() {
         </button>
         <button class="nav-item ${state.page==='audit'?'active':''}" onclick="navigate('audit')">
           <span class="nav-icon">📋</span> Audit Log
+        </button>
+        <button class="nav-item ${state.page==='deletion-requests'?'active':''}" onclick="navigate('deletion-requests')">
+          <span class="nav-icon">🗑️</span> Deletion Requests
         </button>
       </div>` : ''}
       <div class="sidebar-footer">
