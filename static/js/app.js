@@ -1514,6 +1514,13 @@ async function renderSettings() {
               <p class="text-sm text-muted" style="margin-bottom:12px">👎 Below left threshold | 👋 Between | 👍 Above right threshold</p>
               
               <div style="position:relative;margin:30px 0;padding:20px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid rgba(255,255,255,0.1)">
+                <!-- Tick marks (ruler) -->
+                <div style="position:relative;height:20px;margin-bottom:4px;display:flex;justify-content:space-between;padding:0 10px">
+                  ${[0,10,20,30,40,50,60,70,80,90,100].map(i => `<div style="position:relative;text-align:center;flex:1">
+                    <div style="position:absolute;left:50%;transform:translateX(-50%);top:10px;width:1px;height:${i%10===0?'10px':'6px'};background:rgba(255,255,255,${i%10===0?'0.4':'0.2'})"></div>
+                  </div>`).join('')}
+                </div>
+                
                 <!-- Slider track -->
                 <div style="position:relative;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;margin-bottom:20px;cursor:pointer" id="threshold-track" onclick="handleSliderClick(event)">
                   <!-- Filled range -->
@@ -1527,7 +1534,7 @@ async function renderSettings() {
                 </div>
                 
                 <!-- Labels -->
-                <div style="display:grid;grid-template-columns:repeat(11,1fr);gap:0;font-size:10px;color:rgba(255,255,255,0.5);text-align:center">
+                <div style="display:grid;grid-template-columns:repeat(11,1fr);gap:0;font-size:10px;color:rgba(255,255,255,0.5);text-align:center;padding:0 10px">
                   ${[0,10,20,30,40,50,60,70,80,90,100].map(i => `<div>${i}</div>`).join('')}
                 </div>
               </div>
