@@ -150,10 +150,12 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_audit_entity  ON audit_log(entity_type, entity_id)")
         c.execute("INSERT INTO schema_migrations (release_id, notes) VALUES ('R1_audit_log', 'Phase 1 - Audit Log') ON CONFLICT DO NOTHING")
         conn.commit()
-        print("[init_db] R1 Audit Log applied")
+        sys.stderr.write("[init_db] R1 Audit Log applied\n")
+        sys.stderr.flush()
     except Exception as e:
         conn.rollback()
-        print(f"[init_db] R1 FAILED: {e}")
+        sys.stderr.write(f"[init_db] R1 FAILED: {e}\n")
+        sys.stderr.flush()
 
     # Release 2 · UU PDP Compliance (Indonesian Privacy Law)
     try:
@@ -195,10 +197,12 @@ def init_db():
         
         c.execute("INSERT INTO schema_migrations (release_id, notes) VALUES ('R2_uu_pdp', 'Phase 1 - UU PDP Compliance') ON CONFLICT DO NOTHING")
         conn.commit()
-        print("[init_db] R2 UU PDP applied")
+        sys.stderr.write("[init_db] R2 UU PDP applied\n")
+        sys.stderr.flush()
     except Exception as e:
         conn.rollback()
-        print(f"[init_db] R2 FAILED: {e}")
+        sys.stderr.write(f"[init_db] R2 FAILED: {e}\n")
+        sys.stderr.flush()
 
     # Seed leave types
     c.execute("SELECT COUNT(*) as cnt FROM leave_types")
