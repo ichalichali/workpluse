@@ -33,6 +33,32 @@ async function api(method, path, body) {
   return { ok: res.ok, status: res.status, data };
 }
 
+// ── R3 · Helper Functions (must be before renderDashboard) ───────────────────
+function calculateOntimePercentage(summary) {
+  const total = (summary.ontime || 0) + (summary.late || 0);
+  if (total === 0) return 0;
+  return Math.round(((summary.ontime || 0) / total) * 100);
+}
+
+function getHandEmoji(ontimePercent, thresholds) {
+  const lower = thresholds.lower || 40;
+  const upper = thresholds.upper || 80;
+  if (ontimePercent < lower) return { emoji: '👎', label: 'Below Average' };
+  if (ontimePercent >= upper) return { emoji: '👍', label: 'Excellent' };
+  return { emoji: '👋', label: 'Average' };
+}
+
+function shouldShowQuote(ontimePercent, thresholds) {
+  const lower = thresholds.lower || 40;
+  return ontimePercent < lower;
+}
+
+function getRandomMotivationalQuote(userId) {
+  const seed = (userId || Math.random()) * 9999;
+  const idx = Math.floor(seed % MOTIVATIONAL_QUOTES.length);
+  return MOTIVATIONAL_QUOTES[idx];
+}
+
 // ── Render Router ─────────────────────────────────────────────────────────────
 function render() {
   const app = document.getElementById('app');
@@ -1520,6 +1546,9 @@ async function renderSettings() {
         </div>
       </div>
     </div>`;
+  
+  // R3: Initialize slider UI after rendering
+  setTimeout(updateSliderUI, 0);
 }
 
 async function saveSmtpSettings() {
@@ -1642,9 +1671,6 @@ function updateSliderUI() {
   fillBar.style.left = `${lowerPercent}%`;
   fillBar.style.width = `${upperPercent - lowerPercent}%`;
 }
-
-// Initialize slider on page load
-document.addEventListener('DOMContentLoaded', () => setTimeout(updateSliderUI, 100));
 
 
 async function testEmail() {
@@ -2722,34 +2748,3 @@ const MOTIVATIONAL_QUOTES = [
   "Great things never come from comfort zones.",
   "Push yourself daily for remarkable results.",
 ];
-
-// ── R3 · Helper Functions ───────────────────────────────────────────────────
-function calculateOntimePercentage(summary) {
-  // Calculate on-time % excluding leave and absent (which includes training, etc)
-  const total = (summary.ontime || 0) + (summary.late || 0);
-  if (total === 0) return 0;
-  return Math.round(((summary.ontime || 0) / total) * 100);
-}
-
-function getRandomMotivationalQuote(userId) {
-  // Deterministic random: same user gets same quote per session
-  const seed = (userId || Math.random()) * 9999;
-  const idx = Math.floor(seed % MOTIVATIONAL_QUOTES.length);
-  return MOTIVATIONAL_QUOTES[idx];
-}
-
-function getHandEmoji(ontimePercent, thresholds) {
-  // thresholds = { lower: 40, upper: 80 }
-  // < lower = 👎, between = 👋, >= upper = 👍
-  const lower = thresholds.lower || 40;
-  const upper = thresholds.upper || 80;
-  
-  if (ontimePercent < lower) return { emoji: '👎', label: 'Below Average' };
-  if (ontimePercent >= upper) return { emoji: '👍', label: 'Excellent' };
-  return { emoji: '👋', label: 'Average' };
-}
-
-function shouldShowQuote(ontimePercent, thresholds) {
-  const lower = thresholds.lower || 40;
-  return ontimePercent < lower; // Show quote only if thumbs down
-}
