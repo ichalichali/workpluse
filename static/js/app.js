@@ -1974,32 +1974,52 @@ async function renderAudit() {
       <button class="btn btn-secondary" onclick="auditExportCSV()">⬇ Export CSV</button>
     </div>
 
-    <div class="card" style="margin-bottom:16px">
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end">
-        <div><label class="form-label">User</label>
-          <select id="aud-f-user" class="form-input"><option value="">All users</option></select></div>
-        <div><label class="form-label">Action</label>
-          <select id="aud-f-action" class="form-input">
-            <option value="">All actions</option>
-            ${AUDIT_ACTIONS.map(a=>`<option value="${a}">${a}</option>`).join('')}
-          </select></div>
-        <div><label class="form-label">Entity</label>
-          <select id="aud-f-entity" class="form-input">
-            <option value="">Any</option>
-            <option value="user">user</option>
-            <option value="leave_request">leave_request</option>
-            <option value="attendance">attendance</option>
-            <option value="branch">branch</option>
-            <option value="settings">settings</option>
-          </select></div>
-        <div><label class="form-label">From date</label>
-          <input type="date" id="aud-f-from" class="form-input"></div>
-        <div><label class="form-label">To date</label>
-          <input type="date" id="aud-f-to" class="form-input"></div>
+    <div class="card" style="margin-bottom:16px;padding:0">
+      <div style="padding:16px;border-bottom:1px solid #e2e8f0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <span style="font-size:13px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">🔍 Filters</span>
+          <button class="btn btn-sm" style="background:none;border:none;color:#64748b;cursor:pointer;text-decoration:underline;font-size:12px" onclick="auditClear()">Clear all</button>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:140px">
+            <label class="form-label" style="font-size:12px">User</label>
+            <select id="aud-f-user" class="form-input" style="font-size:13px;padding:8px 10px">
+              <option value="">All users</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:140px">
+            <label class="form-label" style="font-size:12px">Action</label>
+            <select id="aud-f-action" class="form-input" style="font-size:13px;padding:8px 10px">
+              <option value="">All actions</option>
+              ${AUDIT_ACTIONS.map(a=>`<option value="${a}">${a.replace(/_/g,' ')}</option>`).join('')}
+            </select>
+          </div>
+          <div style="flex:0.8;min-width:120px">
+            <label class="form-label" style="font-size:12px">Entity</label>
+            <select id="aud-f-entity" class="form-input" style="font-size:13px;padding:8px 10px">
+              <option value="">Any entity</option>
+              <option value="user">👤 User</option>
+              <option value="leave_request">📅 Leave</option>
+              <option value="attendance">⏱️ Attendance</option>
+              <option value="branch">🏢 Branch</option>
+              <option value="settings">⚙️ Settings</option>
+            </select>
+          </div>
+          <div style="flex:0.9;min-width:130px">
+            <label class="form-label" style="font-size:12px">From</label>
+            <input type="date" id="aud-f-from" class="form-input" style="font-size:13px;padding:8px 10px">
+          </div>
+          <div style="flex:0.9;min-width:130px">
+            <label class="form-label" style="font-size:12px">To</label>
+            <input type="date" id="aud-f-to" class="form-input" style="font-size:13px;padding:8px 10px">
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end">
+            <button class="btn btn-primary" onclick="auditApply()" style="padding:8px 16px;font-size:13px;font-weight:600">Apply</button>
+          </div>
+        </div>
       </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-        <button class="btn btn-secondary" onclick="auditClear()">Clear</button>
-        <button class="btn btn-primary" onclick="auditApply()">Apply</button>
+      <div id="aud-active-filters" style="display:none;padding:10px 16px;background:#f0f9ff;border-bottom:1px solid #e0f2fe;font-size:12px;color:#0369a1">
+        Active filters: <span id="aud-filter-badges"></span>
       </div>
     </div>
 
@@ -2094,6 +2114,31 @@ function auditApply() {
     to_date:     document.getElementById('aud-f-to').value
   };
   auditState.offset = 0;
+  
+  // Show active filters badge
+  const hasFilters = Object.values(auditState.filters).some(v => v);
+  const filterDiv = document.getElementById('aud-active-filters');
+  if (hasFilters) {
+    const badges = Object.entries(auditState.filters)
+      .filter(([k, v]) => v)
+      .map(([k, v]) => {
+        const labels = {
+          user_id: `User: ${auditState.users.find(u => u.id == v)?.name || v}`,
+          action: `Action: ${v.replace(/_/g, ' ')}`,
+          entity_type: `Entity: ${v}`,
+          from_date: `From: ${v}`,
+          to_date: `To: ${v}`
+        };
+        return labels[k] || k;
+      })
+      .map(b => `<span style="display:inline-block;padding:3px 8px;margin:2px 4px 2px 0;background:#dbeafe;border:1px solid #93c5fd;border-radius:12px;font-weight:500">${b} ×</span>`)
+      .join('');
+    document.getElementById('aud-filter-badges').innerHTML = badges;
+    filterDiv.style.display = 'block';
+  } else {
+    filterDiv.style.display = 'none';
+  }
+  
   auditLoad();
 }
 
@@ -2102,6 +2147,7 @@ function auditClear() {
     .forEach(id => { document.getElementById(id).value = ''; });
   auditState.filters = {};
   auditState.offset  = 0;
+  document.getElementById('aud-active-filters').style.display = 'none';
   auditLoad();
 }
 
