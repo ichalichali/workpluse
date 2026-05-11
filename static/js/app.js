@@ -328,11 +328,12 @@ async function renderDashboard() {
   const el = document.getElementById('page-content');
   el.innerHTML = `<div class="page-header"><h1>Good ${greeting()}, ${state.user.name.split(' ')[0]} 👋</h1><p>${formatDate(new Date())}</p></div><div id="dash-body"><p>Loading…</p></div>`;
 
-  const [todayR, summaryR, balR, attR] = await Promise.all([
+  const [todayR, summaryR, balR, attR, settingsR] = await Promise.all([
     api('GET', '/attendance/today'),
     api('GET', '/attendance/summary'),
     api('GET', '/leave/balance'),
     api('GET', '/attendance/me'),
+    api('GET', '/settings'),
   ]);
 
   const today = todayR.data;
@@ -340,6 +341,13 @@ async function renderDashboard() {
   const sum   = summaryR.data;
   const bals  = balR.data;
   const att   = attR.data;
+  const settings = settingsR.data || {};
+  
+  // R3: Calculate on-time % and quote threshold
+  const ontimePercent = calculateOntimePercentage(sum);
+  const quoteThreshold = parseInt(settings.quote_threshold || '60', 10);
+  const shouldShowQuote = ontimePercent < quoteThreshold;
+  const motivationalQuote = shouldShowQuote ? getRandomMotivationalQuote(state.user.id) : null;
 
   const notPunched = !today.punch_in && isWeekday() && state.punchStatus !== 'leave';
   const alertHtml = notPunched ? `
@@ -361,7 +369,7 @@ async function renderDashboard() {
         <div class="punch-status">
           <div class="punch-item"><div class="punch-item-val">${today.punch_in ? today.punch_in.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH IN</div></div>
           <div class="punch-item"><div class="punch-item-val">${today.punch_out ? today.punch_out.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH OUT</div></div>
-          <div class="punch-item"><div class="punch-item-val">${today.status ? statusBadge(today.status) : '—'}</div><div class="punch-item-lbl">STATUS</div></div>
+          <div class="punch-item"><div class="punch-item-val">👍 ${ontimePercent}%</div><div class="punch-item-lbl">ON-TIME</div></div>
         </div>
       </div>
       <div class="punch-actions" id="punch-actions">
@@ -369,12 +377,21 @@ async function renderDashboard() {
       </div>
     </div>
 
+    ${shouldShowQuote ? `
+    <div style="display:grid;grid-template-columns:1fr auto;gap:16px;margin-bottom:24px">
+      <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num">${sum.ontime||0}</div><div class="stat-label">On-time this month</div></div></div>
+      <div class="card" style="padding:20px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:white;border-radius:12px;min-width:300px">
+        <div style="text-align:center;font-size:16px;line-height:1.6;font-weight:500">💡 ${motivationalQuote}</div>
+      </div>
+    </div>
+    ` : `
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num">${sum.ontime||0}</div><div class="stat-label">On-time this month</div></div></div>
       <div class="stat-card"><div class="stat-icon yellow">⏰</div><div><div class="stat-num">${sum.late||0}</div><div class="stat-label">Late this month</div></div></div>
       <div class="stat-card"><div class="stat-icon red">❌</div><div><div class="stat-num">${sum.absent||0}</div><div class="stat-label">Absences</div></div></div>
       <div class="stat-card"><div class="stat-icon purple">🏖</div><div><div class="stat-num">${sum.leave||0}</div><div class="stat-label">Leave days taken</div></div></div>
     </div>
+    `}
 
     <div class="grid-2">
       <div class="card">
@@ -1442,6 +1459,21 @@ async function renderSettings() {
             <div style="margin-top:16px" class="alert alert-info text-sm">Manage branch locations and radius from <button class="link-btn" onclick="navigate('branches')">Branches & Geofence →</button></div>
           </div>
         </div>
+        <div class="card mb-4">
+          <div class="card-header"><h3>💡 Motivational Quotes</h3></div>
+          <div class="card-body">
+            <p class="text-sm text-muted" style="margin-bottom:12px">Show motivational quotes to employees with below-average on-time rates.</p>
+            <div class="form-group">
+              <label>On-time % Threshold (show quote if below)</label>
+              <div style="display:flex;gap:10px;align-items:center">
+                <input id="s-quote-threshold" type="number" min="0" max="100" value="${s.quote_threshold || '60'}" style="width:80px"/>
+                <span style="font-size:14px;color:#64748b">%</span>
+              </div>
+              <p class="text-sm text-muted" style="margin-top:8px">Default: 60%. Employees with on-time rate below this will see a motivational quote card on their dashboard.</p>
+            </div>
+            <button class="btn btn-primary" onclick="saveQuoteSettings()">Save Quote Settings</button>
+          </div>
+        </div>
       </div>
     </div>`;
 }
@@ -1464,6 +1496,18 @@ async function saveGeoSettings() {
   const data = { geofence_enabled: document.getElementById('s-geo-on').checked ? '1' : '0' };
   const r = await api('POST', '/settings/save', data);
   if (r.ok) showToast('success', 'Geofence setting saved');
+  else showToast('error', r.data.error);
+}
+
+async function saveQuoteSettings() {
+  const threshold = parseInt(document.getElementById('s-quote-threshold').value || '60', 10);
+  if (threshold < 0 || threshold > 100) {
+    showToast('error', 'Quote threshold must be between 0 and 100');
+    return;
+  }
+  const data = { quote_threshold: String(threshold) };
+  const r = await api('POST', '/settings/save', data);
+  if (r.ok) showToast('success', 'Quote settings saved');
   else showToast('error', r.data.error);
 }
 
@@ -2444,3 +2488,116 @@ const pdpState = { showModal: false, deleteReason: '', deletionRequests: [] };
 
 const PRIVACY_POLICY_ID = 'id-privacy-policy';
 const CURRENT_CONSENT_VERSION = '2026-05-v1';
+
+// ── R3 · Motivational Quotes (90 quotes) ─────────────────────────────────────
+const MOTIVATIONAL_QUOTES = [
+  // Indonesian quotes
+  "Kesuksesan dimulai dari disiplin diri. Mulai dari sekarang! 💪",
+  "Jangan khawatir tentang kegagalan, khawatir tentang peluang yang terlewat.",
+  "Setiap hari adalah kesempatan baru untuk menjadi lebih baik. 🌟",
+  "Kerja keras hari ini adalah kesuksesan besok. Terus maju! 🚀",
+  "Fokus pada apa yang bisa kamu kontrol, bukan pada apa yang tidak bisa.",
+  "Ketepatan waktu adalah bentuk penghormatan kepada diri sendiri dan tim.",
+  "Konsistensi adalah kunci untuk mencapai tujuan. Jangan putus semangat! 🔑",
+  "Setiap hadir tepat waktu adalah kemenangan kecil menuju kesuksesan besar.",
+  "Disiplin bukan hukuman, tapi investasi untuk masa depan yang lebih baik.",
+  "Mulai hari ini dengan tekad kuat untuk menjadi lebih baik. 💯",
+  "Waktu adalah aset paling berharga. Hargai setiap detiknya.",
+  "Ketika kamu konsisten, hasil akan datang sendiri. Percaya pada proses! 🌱",
+  "Setiap kegagalan adalah pelajaran menuju kesuksesan.",
+  "Jangan menunda sampai besok apa yang bisa kamu lakukan hari ini.",
+  "Kehadiran tepat waktu mencerminkan profesionalisme dan tanggung jawab.",
+  "Bangun semangat baru setiap pagi. Hari ini adalah harimu! ☀️",
+  "Perubahan dimulai dari keputusan kecil yang diambil hari ini.",
+  "Kesuksesan bukan tujuan, tapi perjalanan. Nikmati setiap langkah! 🎯",
+  "Apa pun tantangannya, kamu lebih kuat dari yang kamu kira.",
+  "Disiplin adalah jembatan antara tujuan dan pencapaian.",
+  "Setiap menit yang tidak terbuang adalah investasi untuk masa depan.",
+  "Kamu memiliki kekuatan untuk mengubah situasi. Mulai sekarang! ⚡",
+  "Jangan menunggu kesempatan sempurna, ciptakanlah.",
+  "Kebiasaan baik adalah fondasi kesuksesan jangka panjang.",
+  "Hadir tepat waktu adalah tanda menghormati waktu dan komitmen.",
+  "Kemajuan kecil setiap hari menghasilkan perubahan besar. 📈",
+  "Mindsetmu adalah satu-satunya batasan yang ada.",
+  "Fokus pada tujuan, bukan pada keluh kesah. Bergeraklah maju! 🏃",
+  "Kesuksesan dimulai dengan satu langkah kecil menuju perubahan.",
+  "Jangan membandingkan dirimu dengan orang lain. Bandingkan dengan dirimu kemarin.",
+  "Kepercayaan diri adalah hasil dari konsistensi dan kerja keras.",
+  "Setiap hari yang hadir tepat waktu adalah bukti dedikasi dirimu.",
+  "Masa depan milik mereka yang siap bekerja keras hari ini.",
+  "Hambatan adalah kesempatan untuk tumbuh lebih kuat. 💎",
+  "Tetap positif, tetap fokus, dan hasil akan menyusul. ✨",
+  "Disiplin adalah kebebasan yang sejati.",
+  "Kamu adalah desainer dari masa depanmu sendiri. Ciptakanlah!",
+  "Keberhasilan dibangun dari kebiasaan-kebiasaan kecil setiap hari.",
+  "Jangan tunggu mood yang sempurna, ambil tindakan sekarang.",
+  "Energimu positif hari ini akan menciptakan hasil positif besok.",
+  "Hadir tepat waktu bukan hanya tentang jam, tapi tentang rasa hormat.",
+  "Kualitas hidupmu ditentukan oleh kualitas keputusan yang kamu ambil.",
+  "Mulai dari sekarang, bukan besok. Besok adalah terlambat. 🔥",
+  "Kerja keras adalah satu-satunya jalan menuju kesuksesan sejati.",
+  "Jangan takut untuk memulai, takut untuk berhenti.",
+  "Setiap prestasi dimulai dengan keberanian untuk mencoba.",
+  
+  // English quotes
+  "Success is built on small daily victories. Keep going! 🌟",
+  "Your discipline today is your freedom tomorrow.",
+  "Don't just dream it, do it. Start today! 💪",
+  "Every on-time arrival is a step toward excellence.",
+  "Progress is progress, no matter how small. Keep moving! 📈",
+  "Don't just watch others succeed, become one of them.",
+  "Excellence is a habit, not an act. Build it now! 💎",
+  "Being on time shows respect, reliability, and professionalism.",
+  "You are stronger than your doubts. Keep going!",
+  "Success is 1% inspiration and 99% perspiration.",
+  "Focus on being better than you were yesterday.",
+  "Your dedication today shapes your tomorrow.",
+  "Believe in the process, trust the journey. 🌱",
+  "Small steps today, giant leaps tomorrow.",
+  "You are the CEO of your own life. Lead it well!",
+  "Momentum is built through consistent effort.",
+  "Your growth is your responsibility. Own it! 🏆",
+  "Success is reserved for those who refuse to quit.",
+  "Greatness is not a destination, it's a direction.",
+  "You are one decision away from a different life.",
+  "Keep pushing, the reward is worth it!",
+  "Excellence is not a skill, it's an attitude.",
+  "Your potential is infinite. Tap into it!",
+  "Today's effort is tomorrow's achievement.",
+  "Never settle for less than your best.",
+  "You've overcome harder things before. You've got this! 💪",
+  "The only way to do great work is to love what you do.",
+  "Consistency beats intensity. Show up every day! 🎯",
+  "You've got this. One day at a time.",
+  "Your future self will thank you for today.",
+  "Being on time is being respectful of everyone.",
+  "Let today be the day you rise and shine. ☀️",
+  "Challenges are opportunities to prove your strength.",
+  "Don't wait for perfect conditions, create them.",
+  "Every achievement starts with trying.",
+  "Your potential is limitless. Believe! 🚀",
+  "Success is a journey, enjoy the ride!",
+  "The difference between now and 5 years is your choices.",
+  "Discipline is choosing what you want most.",
+  "You are capable of amazing things.",
+  "Today is a gift. Use it wisely! 🎁",
+  "The only impossible journey is the one you don't begin.",
+  "Your attitude determines your altitude. Stay positive! ✈️",
+  "Great things never come from comfort zones.",
+  "Push yourself daily for remarkable results.",
+];
+
+// ── R3 · Helper Functions ───────────────────────────────────────────────────
+function calculateOntimePercentage(summary) {
+  // Calculate on-time % excluding leave and absent (which includes training, etc)
+  const total = (summary.ontime || 0) + (summary.late || 0);
+  if (total === 0) return 0;
+  return Math.round(((summary.ontime || 0) / total) * 100);
+}
+
+function getRandomMotivationalQuote(userId) {
+  // Deterministic random: same user gets same quote per session
+  const seed = (userId || Math.random()) * 9999;
+  const idx = Math.floor(seed % MOTIVATIONAL_QUOTES.length);
+  return MOTIVATIONAL_QUOTES[idx];
+}
