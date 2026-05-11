@@ -216,6 +216,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='settings'?'active':''}" onclick="navigate('settings')">
           <span class="nav-icon">⚙️</span> Settings
         </button>
+        <button class="nav-item ${state.page==='audit'?'active':''}" onclick="navigate('audit')">
+          <span class="nav-icon">📋</span> Audit Log
+        </button>
       </div>` : ''}
       <div class="sidebar-footer">
         <div class="user-card">
@@ -263,6 +266,7 @@ async function loadPage() {
     case 'branches':    return renderBranches();
     case 'settings':    return renderSettings();
     case 'reports':     return renderReports();
+    case 'audit':       return renderAudit();
   }
 }
 
@@ -1897,77 +1901,7 @@ function reportStyles() {
 
 function capFirst(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 
-// ============================================================
-// OnTime · app.js · R1 Audit Log Patch
-// ============================================================
-// Three small additions to your existing app.js. No deletions.
-// ============================================================
-
-
-// ────────────────────────────────────────────────────────────────────────
-// EDIT 1 — Add nav item to HR Admin sidebar section
-// ────────────────────────────────────────────────────────────────────────
-// Location: inside renderShell(), in the HR Admin section
-// Find this block (around line 216-219):
-
-//        <button class="nav-item ${state.page==='settings'?'active':''}" onclick="navigate('settings')">
-//          <span class="nav-icon">⚙️</span> Settings
-//        </button>
-//      </div>` : ''}
-
-// REPLACE WITH:
-
-//        <button class="nav-item ${state.page==='settings'?'active':''}" onclick="navigate('settings')">
-//          <span class="nav-icon">⚙️</span> Settings
-//        </button>
-//        <button class="nav-item ${state.page==='audit'?'active':''}" onclick="navigate('audit')">
-//          <span class="nav-icon">📋</span> Audit Log
-//        </button>
-//      </div>` : ''}
-
-
-// ────────────────────────────────────────────────────────────────────────
-// EDIT 2 — Add 'audit' case to the page dispatcher
-// ────────────────────────────────────────────────────────────────────────
-// Location: inside loadPage(), around line 265
-// Find this switch (around line 256-266):
-
-//   switch(state.page) {
-//     case 'dashboard':   return renderDashboard();
-//     case 'attendance':  return renderAttendance();
-//     case 'leave':       return renderLeave();
-//     case 'team':        return renderTeam();
-//     case 'approvals':   return renderApprovals();
-//     case 'employees':   return renderEmployees();
-//     case 'branches':    return renderBranches();
-//     case 'settings':    return renderSettings();
-//     case 'reports':     return renderReports();
-//   }
-
-// REPLACE WITH (just add the 'audit' line):
-
-//   switch(state.page) {
-//     case 'dashboard':   return renderDashboard();
-//     case 'attendance':  return renderAttendance();
-//     case 'leave':       return renderLeave();
-//     case 'team':        return renderTeam();
-//     case 'approvals':   return renderApprovals();
-//     case 'employees':   return renderEmployees();
-//     case 'branches':    return renderBranches();
-//     case 'settings':    return renderSettings();
-//     case 'reports':     return renderReports();
-//     case 'audit':       return renderAudit();
-//   }
-
-
-// ────────────────────────────────────────────────────────────────────────
-// EDIT 3 — Add the renderAudit() function (new code)
-// ────────────────────────────────────────────────────────────────────────
-// Location: append to the END of your app.js file
-// Copy everything below this line into app.js
-// ────────────────────────────────────────────────────────────────────────
-
-// ── Audit Log Page (HR Admin) ────────────────────────────────────────────────
+// ── Audit Log Page (HR Admin · R1) ───────────────────────────────────────────
 const auditState = { limit: 50, offset: 0, total: 0, rows: [], filters: {}, users: [] };
 
 const AUDIT_ACTIONS = [
@@ -2007,11 +1941,9 @@ async function renderAudit() {
     </div>
 
     <div class="card" style="margin-bottom:16px">
-      <div class="grid grid-cols-5 gap-3" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end">
         <div><label class="form-label">User</label>
-          <select id="aud-f-user" class="form-input">
-            <option value="">All users</option>
-          </select></div>
+          <select id="aud-f-user" class="form-input"><option value="">All users</option></select></div>
         <div><label class="form-label">Action</label>
           <select id="aud-f-action" class="form-input">
             <option value="">All actions</option>
@@ -2064,7 +1996,7 @@ async function renderAudit() {
       </div>
     </div>
   `;
-  // Load users for filter
+  // Load users for filter dropdown
   const uRes = await api('GET', '/users');
   if (uRes.ok) {
     auditState.users = uRes.data;
