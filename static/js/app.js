@@ -383,14 +383,14 @@ async function renderDashboard() {
     // 👋 is anything in between
   };
   const handState = getHandEmoji(ontimePercent, thresholds);
-  const willShowQuote = shouldShowQuote(ontimePercent, thresholds) && handEmojiState.showQuoteAfterPunchIn;
-  const motivationalQuote = willShowQuote ? getRandomMotivationalQuote(state.user.id) : null;
   
-  // Check if quote should expire
-  if (handEmojiState.quoteExpireTime && Date.now() > handEmojiState.quoteExpireTime) {
-    handEmojiState.showQuoteAfterPunchIn = false;
-    handEmojiState.quoteExpireTime = null;
-  }
+  // R3: Get quote from localStorage if employee is LATE (👎 status)
+  const todayDateStr = new Date().toISOString().split('T')[0];
+  const quoteKey = `ontime_quote_${todayDateStr}`;
+  const isLate = ontimePercent < thresholds.lower;
+  const storedQuote = isLate ? localStorage.getItem(quoteKey) : null;
+  const motivationalQuote = storedQuote || null;
+  const willShowQuote = !!motivationalQuote;
 
   const notPunched = !today.punch_in && isWeekday() && state.punchStatus !== 'leave';
   const alertHtml = notPunched ? `
@@ -497,9 +497,16 @@ async function doPunchIn() {
   const distMsg = r.data.distance != null ? ` · ${r.data.distance}m from office` : '';
   showToast('success', `Punched in — ${r.data.status}${distMsg}`);
   
-  // R3: Trigger quote display for 10 seconds after punch-in
-  handEmojiState.showQuoteAfterPunchIn = true;
-  handEmojiState.quoteExpireTime = Date.now() + 10000;
+  // R3: If employee is LATE (👎), generate and store a motivational quote for the day
+  if (r.data.status === 'late') {
+    const today = new Date().toISOString().split('T')[0];
+    const quoteKey = `ontime_quote_${today}`;
+    // Only generate new quote if not already stored for today
+    if (!localStorage.getItem(quoteKey)) {
+      const randomQuote = MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)];
+      localStorage.setItem(quoteKey, randomQuote);
+    }
+  }
   
   await renderDashboard();
 }
@@ -515,9 +522,9 @@ async function doPunchOut() {
   const distMsg = r.data.distance != null ? ` · ${r.data.distance}m from office` : '';
   showToast('success', `Punched out successfully${distMsg}`);
   
-  // R3: Clear quote display after punch-out
-  handEmojiState.showQuoteAfterPunchIn = false;
-  handEmojiState.quoteExpireTime = null;
+  // R3: Clear quote from localStorage on punch-out
+  const today = new Date().toISOString().split('T')[0];
+  localStorage.removeItem(`ontime_quote_${today}`);
   
   await renderDashboard();
 }
