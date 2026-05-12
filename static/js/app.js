@@ -1248,7 +1248,10 @@ async function renderEmployees() {
   el.innerHTML = `
     <div class="page-header flex justify-between items-center">
       <div><h1>🧑‍💼 Employees</h1><p>Manage your workforce</p></div>
-      <button class="btn btn-primary" onclick="showAddEmployee()">+ Add Employee</button>
+      <div class="flex gap-2">
+        <button class="btn btn-secondary" onclick="downloadCSVTemplate()">📥 CSV Template</button>
+        <button class="btn btn-primary" onclick="showAddEmployee()">+ Add Employee</button>
+      </div>
     </div>
     <div id="emp-content">Loading…</div>`;
   await loadEmployees();
@@ -1262,10 +1265,11 @@ async function loadEmployees() {
       <div class="card-header"><h3>All Employees</h3><span class="text-sm text-muted">${users.length} total</span></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>ID</th><th>Email</th><th>Department</th><th>Supervisor</th><th>Branch</th><th>Role</th><th>Shift</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>ID</th><th>Email</th><th>Department</th><th>Hire Date</th><th>Probation Status</th><th></th></tr></thead>
           <tbody>
             ${users.map(u => {
               const ini = u.name.split(' ').map(n=>n[0]).join('').slice(0,2);
+              const probationBadge = u.probation_status === 'active' ? '<span style="background:#ff6b6b;color:white;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600">⚠ On Probation</span>' : '';
               return `<tr>
                 <td><div class="flex items-center gap-3">
                   <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--cyan));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:white;flex-shrink:0">${ini}</div>
@@ -1274,10 +1278,8 @@ async function loadEmployees() {
                 <td class="font-mono text-sm">${u.employee_id}</td>
                 <td class="text-sm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${u.email}</td>
                 <td>${u.department||'—'}</td>
-                <td class="text-sm">${u.manager_name||'—'}</td>
-                <td class="text-sm">${u.branch_name||'—'}</td>
-                <td>${roleBadge(u.role)}</td>
-                <td class="font-mono text-sm">${u.shift_start}–${u.shift_end}</td>
+                <td class="font-mono text-sm">${u.hire_date||'—'}</td>
+                <td>${probationBadge}</td>
                 <td><button class="btn btn-ghost btn-sm" onclick="showEditEmployee(${JSON.stringify(u).replace(/"/g,'&quot;')})">Edit</button></td>
               </tr>`;
             }).join('')}
@@ -1330,6 +1332,14 @@ async function empFormHtml(alertId, u={}) {
       <div class="form-group"><label>Shift Start</label><input id="ae-ss" type="time" value="${u.shift_start||'09:00'}"/></div>
       <div class="form-group"><label>Shift End</label><input id="ae-se" type="time" value="${u.shift_end||'18:00'}"/></div>
     </div>
+    <div class="form-row">
+      <div class="form-group"><label>Hire Date (R4b)</label><input id="ae-hd" type="date" value="${u.hire_date||''}"/></div>
+      <div class="form-group"><label>Certificate Name</label><input id="ae-cert-name" value="${u.certificate_name||''}" placeholder="AWS Solutions Architect"/></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Certificate Expiry</label><input id="ae-cert-exp" type="date" value="${u.certificate_expiry||''}"/></div>
+      <div class="form-group"></div>
+    </div>
     <div class="form-group"><label>Temp Password ${u.id?'(leave blank to keep current)':''}</label><input id="ae-pw" type="password" placeholder="Password123"/></div>`;
 }
 
@@ -1346,6 +1356,9 @@ function empFormData() {
     shift_start: document.getElementById('ae-ss').value,
     shift_end:   document.getElementById('ae-se').value,
     password:    document.getElementById('ae-pw').value,
+    hire_date:   document.getElementById('ae-hd').value || null,
+    certificate_name: document.getElementById('ae-cert-name').value.trim(),
+    certificate_expiry: document.getElementById('ae-cert-exp').value || null,
   };
 }
 
@@ -1358,7 +1371,9 @@ async function showAddEmployee() {
     }
     const r = await api('POST', '/users/add', data);
     if (!r.ok) { document.getElementById('add-emp-alert').innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`; return false; }
-    showToast('success', 'Employee added successfully');
+    // R4b: Show auto-generated password in success message
+    const tempPwd = r.data.temp_password ? ` Auto-generated password: <code>${r.data.temp_password}</code> (welcome email sent)` : '';
+    showToast('success', `Employee added successfully.${tempPwd}`, 8000);
     await loadEmployees(); return true;
   });
 }
@@ -1376,6 +1391,82 @@ async function showEditEmployee(u) {
     await loadEmployees(); return true;
   });
 }
+
+// R4b: CSV Bulk Import Functions
+function downloadCSVTemplate() {
+  const link = document.createElement('a');
+  link.href = '/api/users/csv-template';
+  link.download = 'employee_template.csv';
+  link.click();
+  showToast('info', 'CSV template downloaded');
+}
+
+async function showBulkImportModal() {
+  const html = `
+    <div id="bulk-import-alert"></div>
+    <div class="form-group">
+      <label>Select CSV File</label>
+      <input id="bulk-csv-file" type="file" accept=".csv" />
+      <div style="font-size:12px;color:var(--text-s);margin-top:8px">
+        Download the CSV template first, then fill in employee data and upload here.
+      </div>
+    </div>
+    <div id="bulk-preview" style="display:none;margin-top:16px">
+      <h4 style="margin-bottom:8px">Preview (first 5 rows):</h4>
+      <div id="bulk-preview-content" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:8px;background:var(--bg-secondary);font-size:12px"></div>
+    </div>
+  `;
+  showModal('Bulk Import Employees (CSV)', html, async () => {
+    const file = document.getElementById('bulk-csv-file').files[0];
+    if (!file) {
+      document.getElementById('bulk-import-alert').innerHTML = `<div class="alert alert-error">Please select a CSV file</div>`;
+      return false;
+    }
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+      const response = await fetch('/api/users/bulk-import', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+      });
+      const r = await response.json();
+      
+      if (!response.ok || !r.ok) {
+        const errors = r.errors ? r.errors.map(e => `<li>${e}</li>`).join('') : r.error;
+        document.getElementById('bulk-import-alert').innerHTML = `<div class="alert alert-error">Import errors:<ul>${errors}</ul></div>`;
+        return false;
+      }
+      
+      showToast('success', `✅ Imported ${r.imported} employee(s). Welcome emails sent.`, 6000);
+      await loadEmployees();
+      return true;
+    } catch (e) {
+      document.getElementById('bulk-import-alert').innerHTML = `<div class="alert alert-error">⚠ ${e.message}</div>`;
+      return false;
+    }
+  });
+  
+  // Add file change listener to show preview
+  const fileInput = document.getElementById('bulk-csv-file');
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const csv = ev.target.result;
+      const lines = csv.split('\n').filter(l => l.trim());
+      const preview = lines.slice(0, 6).map(l => `<code style="display:block;padding:4px">${l.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code>`).join('');
+      document.getElementById('bulk-preview').style.display = 'block';
+      document.getElementById('bulk-preview-content').innerHTML = preview;
+    };
+    reader.readAsText(file);
+  });
+}
+
 
 // ── Branches & Geofence ───────────────────────────────────────────────────────
 async function renderBranches() {

@@ -44,6 +44,61 @@ def get_db():
 def hash_password(p):
     return hashlib.sha256(p.encode()).hexdigest()
 
+def generate_password(length=8):
+    """Generate a random alphanumeric password."""
+    import string
+    chars = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(chars) for _ in range(length))
+
+def send_welcome_email(user_email, user_name, temp_password, app_url):
+    """Send welcome email with login credentials to new employee."""
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT value FROM app_settings WHERE key IN ('smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from')")
+        settings = {row['key']: row['value'] for row in c.fetchall()}
+        conn.close()
+        
+        if not all(k in settings for k in ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from']):
+            sys.stderr.write("[send_welcome_email] Missing SMTP config, skipping email\n")
+            return False
+        
+        subject = "Welcome to OnTime - Your Login Credentials"
+        body = f"""
+Hi {user_name},
+
+Welcome to the team! Your OnTime account is ready.
+
+Here are your login details:
+- Email: {user_email}
+- Temporary Password: {temp_password}
+- Login URL: {app_url}
+
+Please log in and change your password in Settings → Change Password.
+
+Best regards,
+OnTime System
+        """.strip()
+        
+        msg = MIMEMultipart()
+        msg['From'] = settings.get('smtp_from', 'noreply@company.com')
+        msg['To'] = user_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        
+        server = smtplib.SMTP(settings['smtp_host'], int(settings['smtp_port']))
+        server.starttls()
+        server.login(settings['smtp_user'], settings['smtp_pass'])
+        server.send_message(msg)
+        server.quit()
+        
+        sys.stderr.write(f"[send_welcome_email] Sent to {user_email}\n")
+        return True
+    except Exception as e:
+        sys.stderr.write(f"[send_welcome_email] Failed: {e}\n")
+        return False
+
+
 def init_db():
     conn = get_db(); c = conn.cursor()
 
@@ -202,6 +257,45 @@ def init_db():
     except Exception as e:
         conn.rollback()
         sys.stderr.write(f"[init_db] R2 FAILED: {e}\n")
+        sys.stderr.flush()
+
+    # Release 3 · Three-tier Hand Emoji + Motivational Quotes
+    try:
+        c.execute("ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS thumb_down_threshold TEXT DEFAULT '40'")
+        c.execute("ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS thumb_up_threshold TEXT DEFAULT '80'")
+        c.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R3_hand_emoji', 'Phase 1 - Three-tier Emoji + Quotes')
+            ON CONFLICT DO NOTHING
+        """)
+        conn.commit()
+        sys.stderr.write("[init_db] R3 Hand Emoji applied\n")
+        sys.stderr.flush()
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R3 FAILED: {e}\n")
+        sys.stderr.flush()
+
+    # Release 4b · Employee Onboarding (Integrated with Employee Management)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hire_date DATE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS certificate_name TEXT")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS certificate_expiry DATE")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS probation_status TEXT DEFAULT 'not_started'")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS probation_months INTEGER DEFAULT 3")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id)")
+        
+        c.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R4b_onboarding', 'Phase 1 - Employee Onboarding')
+            ON CONFLICT DO NOTHING
+        """)
+        conn.commit()
+        sys.stderr.write("[init_db] R4b Onboarding applied\n")
+        sys.stderr.flush()
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R4b FAILED: {e}\n")
         sys.stderr.flush()
 
     # Seed leave types
@@ -563,16 +657,17 @@ def delete_branch():
 def get_settings():
     err=require_login()
     if err: return err
-    if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
+    # Allow all logged-in users to READ settings (needed for hand emoji thresholds, etc)
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT key,value FROM app_settings"); data=rows(c); conn.close()
     s={r['key']:r['value'] for r in data}; s.pop('smtp_pass',None)
-    return jsonify(s)
+    return jsonify(data=s)
 
 @app.route('/api/settings/save',methods=['POST'])
 def save_settings():
     err=require_login()
     if err: return err
+    # Only HR admins can WRITE settings
     if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
     conn=get_db(); c=conn.cursor()
     changes={}
@@ -713,12 +808,26 @@ def add_user():
     data=request.json
     first=data.get('first_name','').strip(); last=data.get('last_name','').strip()
     full=f"{first} {last}".strip(); conn=get_db(); c=conn.cursor()
+    
+    # R4b: Auto-generate password if not provided
+    temp_password = data.get('password') or generate_password(8)
+    hashed_password = hash_password(temp_password)
+    
+    # R4b: Determine probation status based on hire_date
+    hire_date = data.get('hire_date') or None
+    probation_status = 'active' if hire_date else 'not_started'
+    
     try:
-        c.execute("INSERT INTO users (employee_id,first_name,last_name,name,email,password,role,department,branch_id,manager_id,shift_start,shift_end) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-                  (data['employee_id'],first,last,full,data['email'],hash_password(data.get('password','Password123')),
+        c.execute("""INSERT INTO users 
+                    (employee_id,first_name,last_name,name,email,password,role,department,branch_id,manager_id,
+                     shift_start,shift_end,hire_date,certificate_name,certificate_expiry,probation_status,created_by) 
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                  (data['employee_id'],first,last,full,data['email'],hashed_password,
                    data.get('role','employee'),data.get('department',''),
                    data.get('branch_id') or None,data.get('manager_id') or None,
-                   data.get('shift_start','09:00'),data.get('shift_end','18:00')))
+                   data.get('shift_start','09:00'),data.get('shift_end','18:00'),
+                   hire_date, data.get('certificate_name'), data.get('certificate_expiry'),
+                   probation_status, session['user_id']))
         uid=row(c)['id']; yr=today_local().year
         c.execute("SELECT id,max_days FROM leave_types"); lts=rows(c)
         for lt in lts:
@@ -727,10 +836,18 @@ def add_user():
         log_audit(c, session['user_id'], 'user_create', entity_type='user', entity_id=uid,
                   after={'employee_id':data['employee_id'],'name':full,'email':data['email'],
                          'role':data.get('role','employee'),'department':data.get('department',''),
-                         'branch_id':data.get('branch_id'),'manager_id':data.get('manager_id')})
+                         'branch_id':data.get('branch_id'),'manager_id':data.get('manager_id'),
+                         'hire_date':hire_date,'probation_status':probation_status})
         conn.commit()
+        conn.close()
+        
+        # R4b: Send welcome email with auto-generated password
+        app_url = f"{request.host_url.rstrip('/')}/index.html"
+        send_welcome_email(data['email'], full, temp_password, app_url)
+        
+        return jsonify({'ok':True, 'id':uid, 'temp_password':temp_password})
     except Exception as e: conn.rollback(); conn.close(); return jsonify({'error':str(e)}),400
-    conn.close(); return jsonify({'ok':True})
+
 
 @app.route('/api/users/update',methods=['POST'])
 def update_user():
@@ -740,16 +857,26 @@ def update_user():
     data=request.json; first=data.get('first_name','').strip(); last=data.get('last_name','').strip()
     full=f"{first} {last}".strip(); conn=get_db(); c=conn.cursor()
     try:
-        c.execute("SELECT first_name,last_name,name,email,role,department,branch_id,manager_id,shift_start,shift_end FROM users WHERE id=%s",(data['id'],))
+        c.execute("SELECT first_name,last_name,name,email,role,department,branch_id,manager_id,shift_start,shift_end,hire_date,certificate_name,certificate_expiry FROM users WHERE id=%s",(data['id'],))
         old=row(c); old_d=dict(old) if old else {}
-        c.execute("UPDATE users SET first_name=%s,last_name=%s,name=%s,email=%s,role=%s,department=%s,branch_id=%s,manager_id=%s,shift_start=%s,shift_end=%s WHERE id=%s",
+        
+        # R4b: Update hire_date and certificate fields
+        hire_date = data.get('hire_date') or None
+        probation_status = 'active' if hire_date and not old_d.get('hire_date') else old_d.get('probation_status', 'not_started')
+        
+        c.execute("""UPDATE users SET first_name=%s,last_name=%s,name=%s,email=%s,role=%s,department=%s,branch_id=%s,manager_id=%s,
+                    shift_start=%s,shift_end=%s,hire_date=%s,certificate_name=%s,certificate_expiry=%s,probation_status=%s WHERE id=%s""",
                   (first,last,full,data['email'],data.get('role','employee'),data.get('department',''),
                    data.get('branch_id') or None,data.get('manager_id') or None,
-                   data.get('shift_start','09:00'),data.get('shift_end','18:00'),data['id']))
+                   data.get('shift_start','09:00'),data.get('shift_end','18:00'),
+                   hire_date, data.get('certificate_name'), data.get('certificate_expiry'),
+                   probation_status, data['id']))
         new_d={'first_name':first,'last_name':last,'name':full,'email':data['email'],
                'role':data.get('role','employee'),'department':data.get('department',''),
                'branch_id':data.get('branch_id'),'manager_id':data.get('manager_id'),
-               'shift_start':data.get('shift_start','09:00'),'shift_end':data.get('shift_end','18:00')}
+               'shift_start':data.get('shift_start','09:00'),'shift_end':data.get('shift_end','18:00'),
+               'hire_date':hire_date,'certificate_name':data.get('certificate_name'),
+               'certificate_expiry':data.get('certificate_expiry')}
         b,a=diff_dict(old_d, new_d)
         if b: log_audit(c, session['user_id'], 'user_update', entity_type='user', entity_id=data['id'], before=b, after=a)
         if data.get('password'):
@@ -758,6 +885,149 @@ def update_user():
         conn.commit()
     except Exception as e: conn.rollback(); conn.close(); return jsonify({'error':str(e)}),400
     conn.close(); return jsonify({'ok':True})
+
+# ── R4b Employee Onboarding · Bulk CSV Import ──────────────────────────────────
+@app.route('/api/users/csv-template')
+def csv_template():
+    """Return CSV template for bulk employee import."""
+    template = """employee_id,first_name,last_name,email,department,branch_id,manager_id,shift_start,shift_end,hire_date,certificate_name,certificate_expiry
+EMP001,John,Doe,john@company.com,Engineering,1,2,09:00,18:00,2026-05-01,,
+EMP002,Jane,Smith,jane@company.com,Design,1,3,09:00,18:00,2026-05-01,,"""
+    return Response(template, mimetype='text/csv', headers={'Content-Disposition':'attachment;filename=employee_template.csv'})
+
+@app.route('/api/users/bulk-import', methods=['POST'])
+def bulk_import_users():
+    """Bulk import employees from CSV file. R4b feature."""
+    err = require_login()
+    if err: return err
+    if session['role'] != 'hr_admin': return jsonify({'error': 'Forbidden'}), 403
+    
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if not file.filename.endswith('.csv'):
+        return jsonify({'error': 'File must be CSV format'}), 400
+    
+    try:
+        stream = io.TextIOWrapper(file.stream, encoding='utf-8')
+        reader = csv.DictReader(stream)
+        
+        if not reader.fieldnames:
+            return jsonify({'error': 'Empty CSV file'}), 400
+        
+        required_fields = ['employee_id', 'first_name', 'last_name', 'email']
+        if not all(f in reader.fieldnames for f in required_fields):
+            return jsonify({'error': f'Missing required columns: {", ".join(required_fields)}'}), 400
+        
+        conn = get_db(); c = conn.cursor()
+        imported = []; errors = []
+        
+        for idx, row in enumerate(reader, start=2):  # start=2 to account for header row
+            try:
+                first = row.get('first_name', '').strip()
+                last = row.get('last_name', '').strip()
+                full = f"{first} {last}".strip()
+                email = row.get('email', '').strip()
+                employee_id = row.get('employee_id', '').strip()
+                
+                if not (first and last and email and employee_id):
+                    errors.append(f"Row {idx}: Missing required fields (first_name, last_name, email, employee_id)")
+                    continue
+                
+                # Check for duplicate email
+                c.execute("SELECT id FROM users WHERE email=%s AND deleted_at IS NULL", (email,))
+                if c.fetchone():
+                    errors.append(f"Row {idx}: Email {email} already exists")
+                    continue
+                
+                # Check for duplicate employee_id
+                c.execute("SELECT id FROM users WHERE employee_id=%s AND deleted_at IS NULL", (employee_id,))
+                if c.fetchone():
+                    errors.append(f"Row {idx}: Employee ID {employee_id} already exists")
+                    continue
+                
+                # Generate password
+                temp_password = generate_password(8)
+                hashed_password = hash_password(temp_password)
+                
+                # Parse hire_date
+                hire_date = row.get('hire_date', '').strip() or None
+                if hire_date:
+                    try:
+                        datetime.strptime(hire_date, '%Y-%m-%d')  # Validate date format
+                    except ValueError:
+                        errors.append(f"Row {idx}: Invalid hire_date format (use YYYY-MM-DD)")
+                        continue
+                
+                probation_status = 'active' if hire_date else 'not_started'
+                
+                # Parse branch_id
+                branch_id = row.get('branch_id', '').strip() or None
+                if branch_id:
+                    try:
+                        branch_id = int(branch_id)
+                    except ValueError:
+                        errors.append(f"Row {idx}: Invalid branch_id")
+                        continue
+                
+                # Parse manager_id
+                manager_id = row.get('manager_id', '').strip() or None
+                if manager_id:
+                    try:
+                        manager_id = int(manager_id)
+                    except ValueError:
+                        errors.append(f"Row {idx}: Invalid manager_id")
+                        continue
+                
+                c.execute("""INSERT INTO users 
+                            (employee_id, first_name, last_name, name, email, password, role, department, 
+                             branch_id, manager_id, shift_start, shift_end, hire_date, certificate_name, 
+                             certificate_expiry, probation_status, created_by)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING id""",
+                        (employee_id, first, last, full, email, hashed_password, 'employee',
+                         row.get('department', '').strip(),
+                         branch_id, manager_id,
+                         row.get('shift_start', '09:00').strip() or '09:00',
+                         row.get('shift_end', '18:00').strip() or '18:00',
+                         hire_date, row.get('certificate_name', '').strip() or None,
+                         row.get('certificate_expiry', '').strip() or None,
+                         probation_status, session['user_id']))
+                
+                uid = row(c)['id']
+                yr = today_local().year
+                c.execute("SELECT id, max_days FROM leave_types")
+                for lt in rows(c):
+                    c.execute("INSERT INTO leave_balances (user_id, leave_type_id, year, total_days) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                              (uid, lt['id'], yr, lt['max_days']))
+                
+                log_audit(c, session['user_id'], 'user_create_bulk', entity_type='user', entity_id=uid,
+                          after={'employee_id': employee_id, 'name': full, 'email': email, 'probation_status': probation_status})
+                
+                imported.append({'id': uid, 'email': email, 'name': full, 'temp_password': temp_password})
+                
+            except Exception as e:
+                errors.append(f"Row {idx}: {str(e)}")
+                continue
+        
+        conn.commit()
+        conn.close()
+        
+        # Send welcome emails for successfully imported employees
+        for emp in imported:
+            app_url = f"{request.host_url.rstrip('/')}/index.html"
+            send_welcome_email(emp['email'], emp['name'], emp['temp_password'], app_url)
+        
+        return jsonify({
+            'ok': True,
+            'imported': len(imported),
+            'errors': errors,
+            'employees': imported if imported else []
+        })
+    
+    except Exception as e:
+        return jsonify({'error': f"CSV parsing error: {str(e)}"}), 400
 
 # ── R1 Audit Log Endpoints (HR Admin only) ────────────────────────────────────
 @app.route('/api/audit-log')
