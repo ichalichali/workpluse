@@ -495,7 +495,7 @@ def diff_dict(before, after, fields=None):
 @app.route('/api/login',methods=['POST'])
 def login():
     data=request.json; conn=get_db(); c=conn.cursor()
-    c.execute("SELECT * FROM users WHERE email=%s AND password=%s",(data['email'],hash_password(data['password'])))
+    c.execute("SELECT * FROM users WHERE email=%s AND password=%s AND deleted_at IS NULL",(data['email'],hash_password(data['password'])))
     user=row(c)
     if not user:
         log_audit(c, None, 'login_failed', entity_type='user', after={'email': data.get('email')})
@@ -829,9 +829,10 @@ def list_users():
     conn=get_db(); c=conn.cursor()
     c.execute("""SELECT u.id,u.employee_id,u.first_name,u.last_name,u.name,u.email,u.role,
                   u.department,u.branch_id,u.manager_id,u.shift_start,u.shift_end,
-                  u.created_at::text,m.name as manager_name,b.name as branch_name
+                  u.hire_date,u.probation_status,u.created_at::text,m.name as manager_name,b.name as branch_name
            FROM users u LEFT JOIN users m ON u.manager_id=m.id
-           LEFT JOIN branches b ON u.branch_id=b.id ORDER BY u.name""")
+           LEFT JOIN branches b ON u.branch_id=b.id 
+           WHERE u.deleted_at IS NULL ORDER BY u.name""")
     data=rows(c); conn.close(); return jsonify([dict(r) for r in data])
 
 @app.route('/api/users/add',methods=['POST'])
@@ -1062,6 +1063,132 @@ def bulk_import_users():
     
     except Exception as e:
         return jsonify({'error': f"CSV parsing error: {str(e)}"}), 400
+
+# ── Employee Termination · Soft Delete with Archive Export ──────────────────────
+@app.route('/api/users/export-archive/<int:user_id>')
+def export_employee_archive(user_id):
+    """Export employee data + attendance history as CSV before termination."""
+    err=require_login()
+    if err: return err
+    if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
+    
+    conn=get_db(); c=conn.cursor()
+    try:
+        # Get employee info
+        c.execute("SELECT id,employee_id,first_name,last_name,email,department,hire_date,role FROM users WHERE id=%s AND deleted_at IS NULL",(user_id,))
+        emp=row(c)
+        if not emp:
+            conn.close()
+            return jsonify({'error':'Employee not found'}),404
+        
+        # Get all attendance records
+        c.execute("SELECT date,punch_in,punch_out,status,geo_in,geo_out FROM attendance WHERE user_id=%s AND deleted_at IS NULL ORDER BY date DESC",(user_id,))
+        atts=rows(c)
+        conn.close()
+        
+        # Build CSV
+        output=io.StringIO()
+        w=csv.writer(output)
+        w.writerow(['EMPLOYEE ARCHIVE EXPORT'])
+        w.writerow(['Employee ID',emp['employee_id']])
+        w.writerow(['Name',f"{emp['first_name']} {emp['last_name']}"])
+        w.writerow(['Email',emp['email']])
+        w.writerow(['Department',emp['department']])
+        w.writerow(['Hire Date',emp['hire_date']])
+        w.writerow(['Export Date',now_local().strftime('%Y-%m-%d %H:%M:%S')])
+        w.writerow([])
+        w.writerow(['ATTENDANCE RECORDS'])
+        w.writerow(['Date','Punch In','Punch Out','Status','Location In','Location Out'])
+        for a in atts:
+            w.writerow([a['date'],a['punch_in'],a['punch_out'],a['status'],a['geo_in'],a['geo_out']])
+        
+        fname=f"employee_archive_{emp['employee_id']}_{today_local().strftime('%Y%m%d')}.csv"
+        return Response(output.getvalue(),mimetype='text/csv',headers={'Content-Disposition':f'attachment;filename={fname}'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'error':str(e)}),400
+
+@app.route('/api/users/terminate',methods=['POST'])
+def terminate_employee():
+    """Soft delete a single employee (and all their attendance records)."""
+    err=require_login()
+    if err: return err
+    if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
+    
+    user_id=request.json.get('user_id')
+    if not user_id: return jsonify({'error':'user_id required'}),400
+    
+    conn=get_db(); c=conn.cursor()
+    try:
+        # Get employee name for audit
+        c.execute("SELECT first_name,last_name FROM users WHERE id=%s AND deleted_at IS NULL",(user_id,))
+        emp=row(c)
+        if not emp: conn.close(); return jsonify({'error':'Employee not found'}),404
+        
+        emp_name=f"{emp['first_name']} {emp['last_name']}"
+        now=now_local()
+        
+        # Soft delete employee
+        c.execute("UPDATE users SET deleted_at=%s WHERE id=%s",(now,user_id))
+        
+        # Soft delete all attendance records
+        c.execute("UPDATE attendance SET deleted_at=%s WHERE user_id=%s",(now,user_id))
+        
+        # Log to audit trail
+        log_audit(c,session['user_id'],'user_terminate',entity_type='user',entity_id=user_id,
+                  after={'name':emp_name,'terminated_at':now.isoformat()})
+        
+        conn.commit()
+        conn.close()
+        
+        sys.stderr.write(f"[terminate_employee] ✅ User {user_id} ({emp_name}) terminated\n")
+        sys.stderr.flush()
+        return jsonify({'ok':True,'message':f'Employee {emp_name} terminated'})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        sys.stderr.write(f"[terminate_employee] ❌ Error: {str(e)}\n")
+        sys.stderr.flush()
+        return jsonify({'error':str(e)}),400
+
+@app.route('/api/users/terminate-bulk',methods=['POST'])
+def terminate_employees_bulk():
+    """Soft delete multiple employees at once."""
+    err=require_login()
+    if err: return err
+    if session['role']!='hr_admin': return jsonify({'error':'Forbidden'}),403
+    
+    user_ids=request.json.get('user_ids',[])
+    if not user_ids: return jsonify({'error':'user_ids required'}),400
+    
+    conn=get_db(); c=conn.cursor()
+    try:
+        now=now_local()
+        terminated=[]
+        
+        for uid in user_ids:
+            c.execute("SELECT first_name,last_name FROM users WHERE id=%s AND deleted_at IS NULL",(uid,))
+            emp=row(c)
+            if emp:
+                emp_name=f"{emp['first_name']} {emp['last_name']}"
+                c.execute("UPDATE users SET deleted_at=%s WHERE id=%s",(now,uid))
+                c.execute("UPDATE attendance SET deleted_at=%s WHERE user_id=%s",(now,uid))
+                log_audit(c,session['user_id'],'user_terminate',entity_type='user',entity_id=uid,
+                          after={'name':emp_name,'terminated_at':now.isoformat()})
+                terminated.append({'id':uid,'name':emp_name})
+        
+        conn.commit()
+        conn.close()
+        
+        sys.stderr.write(f"[terminate_bulk] ✅ Terminated {len(terminated)} employees\n")
+        sys.stderr.flush()
+        return jsonify({'ok':True,'count':len(terminated),'terminated':terminated})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        sys.stderr.write(f"[terminate_bulk] ❌ Error: {str(e)}\n")
+        sys.stderr.flush()
+        return jsonify({'error':str(e)}),400
 
 # ── R1 Audit Log Endpoints (HR Admin only) ────────────────────────────────────
 @app.route('/api/audit-log')

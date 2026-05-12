@@ -1261,16 +1261,28 @@ async function loadEmployees() {
   const r = await api('GET', '/users');
   const users = r.data;
   document.getElementById('emp-content').innerHTML = `
+    <div id="emp-bulk-bar" style="display:none;background:var(--surface-s);padding:12px;border-radius:6px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div><strong><span id="emp-selected-count">0</span> selected</strong></div>
+      <div class="flex gap-2">
+        <button class="btn btn-ghost btn-sm" onclick="empBulkExport()">📥 Export Selected</button>
+        <button class="btn btn-danger btn-sm" onclick="empBulkTerminate()">🗑️ Terminate Selected</button>
+        <button class="btn btn-ghost btn-sm" onclick="empClearSelection()">Clear</button>
+      </div>
+    </div>
     <div class="card">
       <div class="card-header"><h3>All Employees</h3><span class="text-sm text-muted">${users.length} total</span></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>ID</th><th>Email</th><th>Department</th><th>Hire Date</th><th>Probation Status</th><th></th></tr></thead>
+          <thead><tr>
+            <th style="width:40px"><input type="checkbox" id="emp-select-all" onchange="empToggleSelectAll(this.checked)" style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer"/></th>
+            <th>Name</th><th>ID</th><th>Email</th><th>Department</th><th>Hire Date</th><th>Probation Status</th><th></th>
+          </tr></thead>
           <tbody>
             ${users.map(u => {
               const ini = u.name.split(' ').map(n=>n[0]).join('').slice(0,2);
               const probationBadge = u.probation_status === 'active' ? '<span style="background:#ff6b6b;color:white;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600">⚠ On Probation</span>' : '';
               return `<tr>
+                <td style="width:40px;text-align:center"><input type="checkbox" class="emp-checkbox" data-emp-id="${u.id}" data-emp-name="${u.name}" onchange="empUpdateBulkBar()" style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer"/></td>
                 <td><div class="flex items-center gap-3">
                   <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--cyan));display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:white;flex-shrink:0">${ini}</div>
                   <div><div style="font-weight:600">${u.name}</div><div style="font-size:11px;color:var(--text-s)">${u.email}</div></div>
@@ -1280,7 +1292,10 @@ async function loadEmployees() {
                 <td>${u.department||'—'}</td>
                 <td class="font-mono text-sm">${u.hire_date||'—'}</td>
                 <td>${probationBadge}</td>
-                <td><button class="btn btn-ghost btn-sm" onclick="showEditEmployee(${JSON.stringify(u).replace(/"/g,'&quot;')})">Edit</button></td>
+                <td><div class="flex gap-2">
+                  <button class="btn btn-ghost btn-sm" onclick="showEditEmployee(${JSON.stringify(u).replace(/"/g,'&quot;')})">Edit</button>
+                  <button class="btn btn-ghost btn-sm" onclick="empTerminateSingle(${u.id}, '${u.name}')" style="color:var(--red)">🗑️</button>
+                </div></td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -1289,7 +1304,126 @@ async function loadEmployees() {
     </div>`;
 }
 
-async function empFormHtml(alertId, u={}) {
+// ── Employee Termination Helpers ──
+function empUpdateBulkBar() {
+  const checked = document.querySelectorAll('.emp-checkbox:checked').length;
+  const bar = document.getElementById('emp-bulk-bar');
+  if (checked > 0) {
+    bar.style.display = 'flex';
+    document.getElementById('emp-selected-count').textContent = checked;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function empToggleSelectAll(isChecked) {
+  document.querySelectorAll('.emp-checkbox').forEach(cb => cb.checked = isChecked);
+  empUpdateBulkBar();
+}
+
+function empClearSelection() {
+  document.querySelectorAll('.emp-checkbox').forEach(cb => cb.checked = false);
+  document.getElementById('emp-select-all').checked = false;
+  empUpdateBulkBar();
+}
+
+async function empTerminateSingle(userId, userName) {
+  const conf = confirm(`Terminate employee "${userName}"?\n\nYou will be able to export their data first.`);
+  if (!conf) return;
+  
+  // Export first
+  const resp = await fetch(`/api/users/export-archive/${userId}`);
+  if (resp.ok) {
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `employee_archive_${userId}_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('success', `📥 Archive downloaded for ${userName}`);
+  }
+  
+  // Then terminate
+  const r = await api('POST', '/users/terminate', {user_id: userId});
+  if (r.ok) {
+    showToast('success', `✅ ${userName} has been terminated`);
+    await renderEmployees();
+  } else {
+    showToast('error', r.data.error || 'Failed to terminate');
+  }
+}
+
+async function empBulkExport() {
+  const selected = Array.from(document.querySelectorAll('.emp-checkbox:checked')).map(cb => ({
+    id: parseInt(cb.getAttribute('data-emp-id')),
+    name: cb.getAttribute('data-emp-name')
+  }));
+  
+  if (selected.length === 0) {
+    showToast('error', 'No employees selected');
+    return;
+  }
+  
+  showToast('info', `Exporting ${selected.length} employee(s)...`);
+  
+  for (const emp of selected) {
+    const resp = await fetch(`/api/users/export-archive/${emp.id}`);
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `employee_archive_${emp.id}_${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }
+  
+  showToast('success', `📥 Exported ${selected.length} archive(s)`);
+}
+
+async function empBulkTerminate() {
+  const selected = Array.from(document.querySelectorAll('.emp-checkbox:checked')).map(cb => ({
+    id: parseInt(cb.getAttribute('data-emp-id')),
+    name: cb.getAttribute('data-emp-name')
+  }));
+  
+  if (selected.length === 0) {
+    showToast('error', 'No employees selected');
+    return;
+  }
+  
+  const names = selected.map(e => e.name).join(', ');
+  const conf = confirm(`Terminate ${selected.length} employee(s)?\n\n${names}\n\nYou will be able to export their data first.`);
+  if (!conf) return;
+  
+  // Export all first
+  showToast('info', `Exporting ${selected.length} archive(s)...`);
+  for (const emp of selected) {
+    const resp = await fetch(`/api/users/export-archive/${emp.id}`);
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `employee_archive_${emp.id}_${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  }
+  showToast('success', `📥 Archives downloaded`);
+  
+  // Then terminate
+  const r = await api('POST', '/users/terminate-bulk', {user_ids: selected.map(e => e.id)});
+  if (r.ok) {
+    showToast('success', `✅ Terminated ${r.data.count} employee(s)`);
+    await renderEmployees();
+  } else {
+    showToast('error', r.data.error || 'Failed to terminate');
+  }
+}
+
   const usersR = await api('GET', '/users');
   const branchR = await api('GET', '/branches');
   const supervisors = usersR.data.filter(x => x.role !== 'employee');
