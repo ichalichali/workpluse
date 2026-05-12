@@ -1591,8 +1591,17 @@ async function renderSettings() {
               <p class="text-sm text-muted" style="margin-top:4px;margin-left:28px">Supervisors receive email when an employee submits a leave request.</p>
             </div>
             <div class="form-group"><label>Gmail Address</label><input id="s-smtp-user" value="${s.smtp_user||''}" placeholder="yourapp@gmail.com"/></div>
-            <div class="form-group"><label>Gmail App Password <a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--blue);font-weight:400;margin-left:6px">Get one here →</a></label>
-              <input id="s-smtp-pass" type="password" placeholder="Leave blank to keep current"/></div>
+            <div class="form-group">
+              <label>Gmail App Password <a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--blue);font-weight:400;margin-left:6px">Get one here →</a></label>
+              <div style="display:flex;gap:8px">
+                <input id="s-smtp-pass" type="password" placeholder="Leave blank to keep current" style="flex:1"/>
+                <button type="button" class="btn btn-ghost" onclick="togglePasswordVisibility('s-smtp-pass')" style="padding:8px 12px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:transparent">👁️</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>SMTP Host</label><input id="s-smtp-host" value="${s.smtp_host||'smtp.gmail.com'}" placeholder="smtp.gmail.com"/></div>
+              <div class="form-group"><label>SMTP Port</label><input id="s-smtp-port" type="number" value="${s.smtp_port||'587'}" placeholder="587"/></div>
+            </div>
             <div class="form-group"><label>Display Name (From)</label><input id="s-smtp-from" value="${s.smtp_from||''}" placeholder="OnTime Notifications"/></div>
             <div class="form-group"><label>App Base URL (for links in emails)</label><input id="s-base-url" value="${s.base_url||'http://localhost:5000'}" placeholder="https://yourapp.com"/></div>
             <div class="flex gap-2">
@@ -1682,9 +1691,10 @@ async function saveSmtpSettings() {
     email_enabled: document.getElementById('s-email-on').checked ? '1' : '0',
     smtp_user:  document.getElementById('s-smtp-user').value.trim(),
     smtp_pass:  document.getElementById('s-smtp-pass').value,
+    smtp_host:  document.getElementById('s-smtp-host').value.trim() || 'smtp.gmail.com',
+    smtp_port:  document.getElementById('s-smtp-port').value.trim() || '587',
     smtp_from:  document.getElementById('s-smtp-from').value.trim(),
     base_url:   document.getElementById('s-base-url').value.trim(),
-    smtp_host: 'smtp.gmail.com', smtp_port: '587',
   };
   const r = await api('POST', '/settings/save', data);
   if (r.ok) showToast('success', 'Email settings saved');
@@ -1800,11 +1810,42 @@ function updateSliderUI() {
 
 
 async function testEmail() {
-  const to = prompt('Send test email to:');
-  if (!to) return;
-  const r = await api('POST', '/settings/test-email', { to });
-  if (r.ok && r.data.ok) showToast('success', 'Test email sent!');
-  else showToast('error', r.data.message || 'Failed to send');
+  const html = `
+    <div id="test-email-alert"></div>
+    <div class="form-group">
+      <label>Send Test Email To:</label>
+      <input id="test-email-to" type="email" placeholder="your-email@gmail.com" style="width:100%"/>
+      <div style="font-size:12px;color:var(--text-s);margin-top:8px">
+        We'll send a test email to verify SMTP is configured correctly.
+      </div>
+    </div>
+  `;
+  showModal('Send Test Email', html, async () => {
+    const to = document.getElementById('test-email-to').value.trim();
+    if (!to) {
+      document.getElementById('test-email-alert').innerHTML = `<div class="alert alert-error">Email address is required</div>`;
+      return false;
+    }
+    if (!to.includes('@')) {
+      document.getElementById('test-email-alert').innerHTML = `<div class="alert alert-error">Invalid email address</div>`;
+      return false;
+    }
+    
+    // Show loading state
+    document.getElementById('test-email-alert').innerHTML = `<div class="alert alert-info">⏳ Sending test email to ${to}...</div>`;
+    
+    const r = await api('POST', '/settings/test-email', { to });
+    
+    if (r.ok && r.data.ok) {
+      document.getElementById('test-email-alert').innerHTML = `<div class="alert alert-success">✅ Test email sent to ${to}! Check your inbox (may take 10-30 seconds)</div>`;
+      showToast('success', `Test email sent to ${to}`, 6000);
+      return true;
+    } else {
+      const errorMsg = r.data.error || r.data.message || 'Unknown error';
+      document.getElementById('test-email-alert').innerHTML = `<div class="alert alert-error">❌ Failed to send email: ${errorMsg}</div>`;
+      return false;
+    }
+  });
 }
 
 // ── Modal helper ──────────────────────────────────────────────────────────────
