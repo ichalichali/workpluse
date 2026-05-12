@@ -59,8 +59,11 @@ def send_welcome_email(user_email, user_name, temp_password, app_url):
         settings = {row['key']: row['value'] for row in c.fetchall()}
         conn.close()
         
-        if not all(k in settings for k in ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from']):
-            sys.stderr.write("[send_welcome_email] Missing SMTP config, skipping email\n")
+        # Check if SMTP is configured
+        missing_keys = [k for k in ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from'] if k not in settings or not settings[k]]
+        if missing_keys:
+            sys.stderr.write(f"[send_welcome_email] Missing SMTP config: {missing_keys}\n")
+            sys.stderr.flush()
             return False
         
         subject = "Welcome to OnTime - Your Login Credentials"
@@ -81,10 +84,13 @@ OnTime System
         """.strip()
         
         msg = MIMEMultipart()
-        msg['From'] = settings.get('smtp_from', 'noreply@company.com')
+        msg['From'] = settings['smtp_from']
         msg['To'] = user_email
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
+        
+        sys.stderr.write(f"[send_welcome_email] Connecting to {settings['smtp_host']}:{settings['smtp_port']}...\n")
+        sys.stderr.flush()
         
         server = smtplib.SMTP(settings['smtp_host'], int(settings['smtp_port']))
         server.starttls()
@@ -92,10 +98,12 @@ OnTime System
         server.send_message(msg)
         server.quit()
         
-        sys.stderr.write(f"[send_welcome_email] Sent to {user_email}\n")
+        sys.stderr.write(f"[send_welcome_email] ✅ Sent to {user_email}\n")
+        sys.stderr.flush()
         return True
     except Exception as e:
-        sys.stderr.write(f"[send_welcome_email] Failed: {e}\n")
+        sys.stderr.write(f"[send_welcome_email] ❌ FAILED: {type(e).__name__}: {str(e)}\n")
+        sys.stderr.flush()
         return False
 
 

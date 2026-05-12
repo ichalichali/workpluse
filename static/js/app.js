@@ -1340,7 +1340,22 @@ async function empFormHtml(alertId, u={}) {
       <div class="form-group"><label>Certificate Expiry</label><input id="ae-cert-exp" type="date" value="${u.certificate_expiry||''}"/></div>
       <div class="form-group"></div>
     </div>
-    <div class="form-group"><label>Temp Password ${u.id?'(leave blank to keep current)':''}</label><input id="ae-pw" type="password" placeholder="Password123"/></div>`;
+    <div class="form-group">
+      <label>Temp Password ${u.id?'(leave blank to keep current)':''}</label>
+      <div style="display:flex;gap:8px">
+        <input id="ae-pw" type="password" placeholder="Password123" style="flex:1"/>
+        <button type="button" class="btn btn-ghost" onclick="togglePasswordVisibility('ae-pw')" style="padding:8px 12px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:transparent">👁️</button>
+      </div>
+    </div>`;
+}
+
+function togglePasswordVisibility(fieldId) {
+  const field = document.getElementById(fieldId);
+  if (field.type === 'password') {
+    field.type = 'text';
+  } else {
+    field.type = 'password';
+  }
 }
 
 function empFormData() {
