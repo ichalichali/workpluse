@@ -6,6 +6,12 @@ const state = {
   pendingCount: 0,
 };
 
+// ── R3 · Hand Emoji State ────────────────────────────────────────────────────
+const handEmojiState = {
+  showQuoteAfterPunchIn: false,
+  quoteExpireTime: null,
+};
+
 // ── Initialize from localStorage ──────────────────────────────────────────────
 function initializeSession() {
   const saved = localStorage.getItem('ontime_user');
@@ -31,6 +37,32 @@ async function api(method, path, body) {
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
+}
+
+// ── R3 · Helper Functions (must be before renderDashboard) ───────────────────
+function calculateOntimePercentage(summary) {
+  const total = (summary.ontime || 0) + (summary.late || 0);
+  if (total === 0) return 0;
+  return Math.round(((summary.ontime || 0) / total) * 100);
+}
+
+function getHandEmoji(ontimePercent, thresholds) {
+  const lower = thresholds.lower || 40;
+  const upper = thresholds.upper || 80;
+  if (ontimePercent < lower) return { emoji: '👎', label: 'Below Average' };
+  if (ontimePercent >= upper) return { emoji: '👍', label: 'Excellent' };
+  return { emoji: '👋', label: 'Average' };
+}
+
+function shouldShowQuote(ontimePercent, thresholds) {
+  const lower = thresholds.lower || 40;
+  return ontimePercent < lower;
+}
+
+function getRandomMotivationalQuote(userId) {
+  const seed = (userId || Math.random()) * 9999;
+  const idx = Math.floor(seed % MOTIVATIONAL_QUOTES.length);
+  return MOTIVATIONAL_QUOTES[idx];
 }
 
 // ── Render Router ─────────────────────────────────────────────────────────────
@@ -351,8 +383,8 @@ async function renderDashboard() {
     // 👋 is anything in between
   };
   const handState = getHandEmoji(ontimePercent, thresholds);
-  const shouldShowQuote = shouldShowQuote(ontimePercent, thresholds) && handEmojiState.showQuoteAfterPunchIn;
-  const motivationalQuote = shouldShowQuote ? getRandomMotivationalQuote(state.user.id) : null;
+  const willShowQuote = shouldShowQuote(ontimePercent, thresholds) && handEmojiState.showQuoteAfterPunchIn;
+  const motivationalQuote = willShowQuote ? getRandomMotivationalQuote(state.user.id) : null;
   
   // Check if quote should expire
   if (handEmojiState.quoteExpireTime && Date.now() > handEmojiState.quoteExpireTime) {
@@ -381,7 +413,7 @@ async function renderDashboard() {
           <div class="punch-item"><div class="punch-item-val">${today.punch_in ? today.punch_in.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH IN</div></div>
           <div class="punch-item"><div class="punch-item-val">${today.punch_out ? today.punch_out.slice(0,5) : '--:--'}</div><div class="punch-item-lbl">PUNCH OUT</div></div>
           <div class="punch-item"><div class="punch-item-val">${handState.emoji} ${ontimePercent}%</div><div class="punch-item-lbl">STATUS</div></div>
-          ${shouldShowQuote ? `<div class="punch-item" style="background:rgba(255,255,255,0.08);border-left:3px solid #667eea;padding:12px 16px;border-radius:6px;font-size:13px;line-height:1.5;color:rgba(255,255,255,0.9);font-weight:500;flex:1;margin-left:16px">💡 ${motivationalQuote}</div>` : ''}
+          ${willShowQuote ? `<div class="punch-item" style="background:rgba(255,255,255,0.08);border-left:3px solid #667eea;padding:12px 16px;border-radius:6px;font-size:16px;line-height:1.6;color:rgba(255,255,255,0.9);font-weight:500;flex:1;margin-left:16px">💡 ${motivationalQuote}</div>` : ''}
         </div>
       </div>
       <div class="punch-actions" id="punch-actions">
@@ -1482,6 +1514,13 @@ async function renderSettings() {
               <p class="text-sm text-muted" style="margin-bottom:12px">👎 Below left threshold | 👋 Between | 👍 Above right threshold</p>
               
               <div style="position:relative;margin:30px 0;padding:20px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid rgba(255,255,255,0.1)">
+                <!-- Tick marks (ruler) -->
+                <div style="position:relative;height:20px;margin-bottom:4px;display:flex;justify-content:space-between;padding:0 10px">
+                  ${[0,10,20,30,40,50,60,70,80,90,100].map(i => `<div style="position:relative;text-align:center;flex:1">
+                    <div style="position:absolute;left:50%;transform:translateX(-50%);top:10px;width:1px;height:${i%10===0?'10px':'6px'};background:rgba(255,255,255,${i%10===0?'0.4':'0.2'})"></div>
+                  </div>`).join('')}
+                </div>
+                
                 <!-- Slider track -->
                 <div style="position:relative;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;margin-bottom:20px;cursor:pointer" id="threshold-track" onclick="handleSliderClick(event)">
                   <!-- Filled range -->
@@ -1495,7 +1534,7 @@ async function renderSettings() {
                 </div>
                 
                 <!-- Labels -->
-                <div style="display:grid;grid-template-columns:repeat(11,1fr);gap:0;font-size:10px;color:rgba(255,255,255,0.5);text-align:center">
+                <div style="display:grid;grid-template-columns:repeat(11,1fr);gap:0;font-size:10px;color:rgba(255,255,255,0.5);text-align:center;padding:0 10px">
                   ${[0,10,20,30,40,50,60,70,80,90,100].map(i => `<div>${i}</div>`).join('')}
                 </div>
               </div>
@@ -1520,6 +1559,9 @@ async function renderSettings() {
         </div>
       </div>
     </div>`;
+  
+  // R3: Initialize slider UI after rendering
+  setTimeout(updateSliderUI, 0);
 }
 
 async function saveSmtpSettings() {
@@ -1642,9 +1684,6 @@ function updateSliderUI() {
   fillBar.style.left = `${lowerPercent}%`;
   fillBar.style.width = `${upperPercent - lowerPercent}%`;
 }
-
-// Initialize slider on page load
-document.addEventListener('DOMContentLoaded', () => setTimeout(updateSliderUI, 100));
 
 
 async function testEmail() {
@@ -2722,34 +2761,3 @@ const MOTIVATIONAL_QUOTES = [
   "Great things never come from comfort zones.",
   "Push yourself daily for remarkable results.",
 ];
-
-// ── R3 · Helper Functions ───────────────────────────────────────────────────
-function calculateOntimePercentage(summary) {
-  // Calculate on-time % excluding leave and absent (which includes training, etc)
-  const total = (summary.ontime || 0) + (summary.late || 0);
-  if (total === 0) return 0;
-  return Math.round(((summary.ontime || 0) / total) * 100);
-}
-
-function getRandomMotivationalQuote(userId) {
-  // Deterministic random: same user gets same quote per session
-  const seed = (userId || Math.random()) * 9999;
-  const idx = Math.floor(seed % MOTIVATIONAL_QUOTES.length);
-  return MOTIVATIONAL_QUOTES[idx];
-}
-
-function getHandEmoji(ontimePercent, thresholds) {
-  // thresholds = { lower: 40, upper: 80 }
-  // < lower = 👎, between = 👋, >= upper = 👍
-  const lower = thresholds.lower || 40;
-  const upper = thresholds.upper || 80;
-  
-  if (ontimePercent < lower) return { emoji: '👎', label: 'Below Average' };
-  if (ontimePercent >= upper) return { emoji: '👍', label: 'Excellent' };
-  return { emoji: '👋', label: 'Average' };
-}
-
-function shouldShowQuote(ontimePercent, thresholds) {
-  const lower = thresholds.lower || 40;
-  return ontimePercent < lower; // Show quote only if thumbs down
-}
