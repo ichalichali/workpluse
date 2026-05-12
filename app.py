@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, session, send_from_directory, Response
-import os, json, math, smtplib, hashlib, secrets, csv, io, sys
+import os, json, math, hashlib, secrets, csv, io, sys, requests
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from email.mime.multipart import MIMEMultipart
@@ -391,17 +391,43 @@ def check_geofence(branch_id,lat,lon):
     return dist<=branch['radius_m'],dist,branch['name']
 
 def send_email(to_addr,subject,html_body):
+    """Send email using Resend API (no SMTP issues on Railway)."""
     if get_setting('email_enabled')!='1': return False,'Email not enabled'
-    host=get_setting('smtp_host','smtp.gmail.com'); port=int(get_setting('smtp_port','587'))
-    user=get_setting('smtp_user'); pw=get_setting('smtp_pass'); frm=get_setting('smtp_from') or user
-    if not user or not pw: return False,'SMTP credentials not configured'
+    # Read from environment first, then fall back to app_settings
+    import os
+    api_key=os.environ.get('RESEND_API_KEY') or get_setting('resend_api_key')
+    frm=os.environ.get('RESEND_FROM_EMAIL') or get_setting('smtp_from')
+    if not api_key: return False,'Resend API key not configured'
+    if not frm: return False,'Sender email not configured'
     try:
-        msg=MIMEMultipart('alternative'); msg['Subject']=subject; msg['From']=frm; msg['To']=to_addr
-        msg.attach(MIMEText(html_body,'html'))
-        with smtplib.SMTP(host,port) as s:
-            s.starttls(); s.login(user,pw); s.sendmail(frm,[to_addr],msg.as_string())
-        return True,'sent'
-    except Exception as e: return False,str(e)
+        import requests
+        sys.stderr.write(f"[send_email] Sending via Resend API to {to_addr}...\n")
+        sys.stderr.flush()
+        response=requests.post("https://api.resend.com/emails",headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"},json={"from":frm,"to":to_addr,"subject":subject,"html":html_body},timeout=10)
+        if response.status_code==200:
+            sys.stderr.write(f"[send_email] ✅ Email sent to {to_addr}\n")
+            sys.stderr.flush()
+            return True,'sent'
+        else:
+            error_msg=response.json().get('message',response.text) if response.text else f"HTTP {response.status_code}"
+            sys.stderr.write(f"[send_email] ❌ Failed: {error_msg}\n")
+            sys.stderr.flush()
+            return False,f"Resend error: {error_msg}"
+    except requests.exceptions.Timeout as e:
+        err=f"Request timeout - Resend API not responding"
+        sys.stderr.write(f"[send_email] ❌ {err}\n")
+        sys.stderr.flush()
+        return False,err
+    except requests.exceptions.ConnectionError as e:
+        err=f"Connection error: {str(e)}"
+        sys.stderr.write(f"[send_email] ❌ {err}\n")
+        sys.stderr.flush()
+        return False,err
+    except Exception as e:
+        err=f"{type(e).__name__}: {str(e)}"
+        sys.stderr.write(f"[send_email] ❌ {err}\n")
+        sys.stderr.flush()
+        return False,err
 
 def notify_supervisor(req_id):
     conn=get_db(); c=conn.cursor()
