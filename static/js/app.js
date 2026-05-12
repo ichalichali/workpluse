@@ -1424,6 +1424,7 @@ async function empBulkTerminate() {
   }
 }
 
+async function empFormHtml(alertId, u={}) {
   const usersR = await api('GET', '/users');
   const branchR = await api('GET', '/branches');
   const supervisors = usersR.data.filter(x => x.role !== 'employee');
