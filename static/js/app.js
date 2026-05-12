@@ -1590,19 +1590,8 @@ async function renderSettings() {
               </label>
               <p class="text-sm text-muted" style="margin-top:4px;margin-left:28px">Supervisors receive email when an employee submits a leave request.</p>
             </div>
-            <div class="form-group"><label>Gmail Address</label><input id="s-smtp-user" value="${s.smtp_user||''}" placeholder="yourapp@gmail.com"/></div>
-            <div class="form-group">
-              <label>Gmail App Password <a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--blue);font-weight:400;margin-left:6px">Get one here →</a></label>
-              <div style="display:flex;gap:8px">
-                <input id="s-smtp-pass" type="password" placeholder="Leave blank to keep current" style="flex:1"/>
-                <button type="button" class="btn btn-ghost" onclick="togglePasswordVisibility('s-smtp-pass')" style="padding:8px 12px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:transparent">👁️</button>
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>SMTP Host</label><input id="s-smtp-host" value="${s.smtp_host||'smtp.gmail.com'}" placeholder="smtp.gmail.com"/></div>
-              <div class="form-group"><label>SMTP Port</label><input id="s-smtp-port" type="number" value="${s.smtp_port||'587'}" placeholder="587"/></div>
-            </div>
-            <div class="form-group"><label>Display Name (From)</label><input id="s-smtp-from" value="${s.smtp_from||''}" placeholder="OnTime Notifications"/></div>
+            <div class="form-group"><label>Resend API Key <a href="https://resend.com/api-keys" target="_blank" style="font-size:11px;color:var(--blue);font-weight:400;margin-left:6px">Get one here →</a></label><div style="display:flex;gap:8px"><input id="s-resend-api-key" type="password" placeholder="re_..." style="flex:1"/><button type="button" class="btn btn-ghost" onclick="togglePasswordVisibility('s-resend-api-key')" style="padding:8px 12px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:transparent">👁️</button></div></div>
+            <div class="form-group"><label>Sender Email (must be verified in Resend)</label><input id="s-smtp-from" value="${s.smtp_from||''}" placeholder="noreply@yourdomain.com"/></div>
             <div class="form-group"><label>App Base URL (for links in emails)</label><input id="s-base-url" value="${s.base_url||'http://localhost:5000'}" placeholder="https://yourapp.com"/></div>
             <div class="flex gap-2">
               <button class="btn btn-primary" onclick="saveSmtpSettings()">Save Email Settings</button>
@@ -1689,12 +1678,9 @@ async function renderSettings() {
 async function saveSmtpSettings() {
   const data = {
     email_enabled: document.getElementById('s-email-on').checked ? '1' : '0',
-    smtp_user:  document.getElementById('s-smtp-user').value.trim(),
-    smtp_pass:  document.getElementById('s-smtp-pass').value,
-    smtp_host:  document.getElementById('s-smtp-host').value.trim() || 'smtp.gmail.com',
-    smtp_port:  document.getElementById('s-smtp-port').value.trim() || '587',
-    smtp_from:  document.getElementById('s-smtp-from').value.trim(),
-    base_url:   document.getElementById('s-base-url').value.trim(),
+    resend_api_key: document.getElementById('s-resend-api-key').value,
+    smtp_from: document.getElementById('s-smtp-from').value.trim(),
+    base_url: document.getElementById('s-base-url').value.trim(),
   };
   const r = await api('POST', '/settings/save', data);
   if (r.ok) showToast('success', 'Email settings saved');
