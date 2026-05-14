@@ -832,23 +832,161 @@ async function loadAttHistory() {
       <div class="card-header"><h3>Attendance Records</h3><span class="text-sm text-muted">${att.length} records found</span></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Date</th><th>Day</th><th>Punch In</th><th>Punch Out</th><th>Duration</th><th>Status</th></tr></thead>
-          <tbody>
-            ${att.length ? att.map(a => {
+          <thead><tr><th style="width:40px"><input type="checkbox" id="select-all-att" onchange="toggleAllAttendance(this)"></th><th>Date</th><th>Day</th><th>Punch In</th><th>Punch Out</th><th>Duration</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody id="att-tbody">
+            ${att.length ? att.map((a, idx) => {
               const duration = a.punch_in && a.punch_out ? calcDuration(a.punch_in, a.punch_out) : '—';
-              return `<tr>
+              return `<tr class="att-row" data-date="${a.date}" data-punch-in="${a.punch_in || ''}" data-punch-out="${a.punch_out || ''}" data-status="${a.status || ''}">
+                <td><input type="checkbox" class="att-checkbox" onchange="updateSelectAll()"></td>
                 <td class="font-mono">${a.date}</td>
                 <td>${dayName(a.date)}</td>
                 <td class="font-mono">${a.punch_in ? a.punch_in.slice(0,5) : '—'}</td>
                 <td class="font-mono">${a.punch_out ? a.punch_out.slice(0,5) : '—'}</td>
                 <td>${duration}</td>
                 <td>${badgeHtml(a.status)}</td>
+                <td><button class="btn btn-sm btn-secondary" onclick="openCorrectionModal('${a.date}', '${a.punch_in || ''}', '${a.punch_out || ''}', '${a.status || ''}')">🔧 Correct</button></td>
               </tr>`;
-            }).join('') : '<tr><td colspan="6" class="empty-state"><div class="icon">📭</div><p>No records for this month</p></td></tr>'}
+            }).join('') : '<tr><td colspan="8" class="empty-state"><div class="icon">📭</div><p>No records for this month</p></td></tr>'}
           </tbody>
         </table>
       </div>
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--grey-200)">
+        <button class="btn btn-primary" id="request-corrections-btn" onclick="submitSelectedCorrections()" style="display:none">📤 Request Corrections for Selected</button>
+      </div>
     </div>`;
+}
+
+function toggleAllAttendance(checkbox) {
+  document.querySelectorAll('.att-checkbox').forEach(cb => cb.checked = checkbox.checked);
+  updateSelectAll();
+}
+
+function updateSelectAll() {
+  const all = document.querySelectorAll('.att-checkbox');
+  const checked = document.querySelectorAll('.att-checkbox:checked');
+  document.getElementById('select-all-att').checked = checked.length === all.length && all.length > 0;
+  document.getElementById('request-corrections-btn').style.display = checked.length > 0 ? 'inline-block' : 'none';
+}
+
+async function submitSelectedCorrections() {
+  const selected = document.querySelectorAll('.att-checkbox:checked');
+  if (selected.length === 0) {
+    showToast('Select at least one record', 'error');
+    return;
+  }
+  
+  const dates = Array.from(selected).map(cb => cb.closest('.att-row').dataset.date);
+  
+  // Show first correction modal, then others
+  for (const date of dates) {
+    const row = document.querySelector(`[data-date="${date}"]`);
+    await openCorrectionModal(date, row.dataset.punchIn, row.dataset.punchOut, row.dataset.status);
+  }
+}
+
+function openCorrectionModal(date, originalPunchIn, originalPunchOut, originalStatus) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'correction-modal';
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:500px">
+      <div class="modal-header">
+        <h2>🔧 Request Attendance Correction</h2>
+        <button class="btn-close" onclick="closeCorrectionModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="text" value="${date}" readonly class="input" style="background:#f5f5f5;cursor:not-allowed">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Original Punch In</label>
+            <input type="text" value="${originalPunchIn ? originalPunchIn.slice(0,5) : '—'}" readonly class="input" style="background:#f5f5f5;cursor:not-allowed">
+          </div>
+          <div class="form-group">
+            <label>Corrected Punch In</label>
+            <input type="time" id="corrected-in" class="input">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Original Punch Out</label>
+            <input type="text" value="${originalPunchOut ? originalPunchOut.slice(0,5) : '—'}" readonly class="input" style="background:#f5f5f5;cursor:not-allowed">
+          </div>
+          <div class="form-group">
+            <label>Corrected Punch Out</label>
+            <input type="time" id="corrected-out" class="input">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Status (Optional)</label>
+          <select id="corrected-status" class="input">
+            <option value="">— Keep Original —</option>
+            <option value="ontime">On-Time</option>
+            <option value="late">Late</option>
+            <option value="absent">Absent</option>
+            <option value="leave">On Leave</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Reason for Correction *</label>
+          <textarea id="correction-reason" class="input" rows="3" placeholder="e.g., Traffic delay with proof in email, forgot to clock out, GPS glitch..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Attachment (Optional)</label>
+          <input type="file" id="correction-attachment" class="input">
+          <small style="color:var(--grey-600)">Email receipt, photo proof, etc.</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeCorrectionModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCorrectionRequest('${date}', '${originalPunchIn || ''}', '${originalPunchOut || ''}', '${originalStatus || ''}')">Submit Correction</button>
+      </div>
+    </div>`;
+  
+  document.getElementById('app').appendChild(modal);
+  modal.style.display = 'flex';
+  modal.onclick = (e) => { if (e.target === modal) closeCorrectionModal(); };
+}
+
+function closeCorrectionModal() {
+  const modal = document.getElementById('correction-modal');
+  if (modal) modal.remove();
+}
+
+async function submitCorrectionRequest(date, origIn, origOut, origStatus) {
+  const correctedIn = document.getElementById('corrected-in')?.value;
+  const correctedOut = document.getElementById('corrected-out')?.value;
+  const correctedStatus = document.getElementById('corrected-status')?.value || origStatus;
+  const reason = document.getElementById('correction-reason')?.value;
+  
+  if (!reason) {
+    showToast('Please provide a reason for correction', 'error');
+    return;
+  }
+  
+  const res = await api('POST', '/attendance/request-correction', {
+    date,
+    original_punch_in: origIn,
+    original_punch_out: origOut,
+    original_status: origStatus,
+    corrected_punch_in: correctedIn || null,
+    corrected_punch_out: correctedOut || null,
+    corrected_status: correctedStatus,
+    reason,
+    attachment_url: null  // TODO: handle file upload
+  });
+  
+  if (res.ok) {
+    showToast('Correction request submitted to your manager!', 'success');
+    closeCorrectionModal();
+    // Uncheck the row
+    document.querySelector(`[data-date="${date}"] .att-checkbox`).checked = false;
+    updateSelectAll();
+  } else {
+    showToast(res.data.error || 'Failed to submit correction', 'error');
+  }
 }
 
 // ── Leave Page ────────────────────────────────────────────────────────────────
