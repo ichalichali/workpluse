@@ -361,6 +361,37 @@ def init_db():
                     c.execute("INSERT INTO attendance (user_id,date,punch_in,punch_out,status) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                               (uid,d.isoformat(),f"{ph:02d}:{pm:02d}:00",f"{random.randint(17,19):02d}:{random.randint(0,59):02d}:00",st))
                 except: pass
+
+# Release 5 · Blackout Dates
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS blackout_dates (
+                id SERIAL PRIMARY KEY,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                reason TEXT,
+                applies_to TEXT DEFAULT 'all',
+                department_id INTEGER,
+                user_ids_json TEXT,
+                auto_reject BOOLEAN DEFAULT TRUE,
+                created_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_blackout_dates ON blackout_dates(start_date, end_date)")
+        c.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R5_blackout_dates', 'Blackout date management for leave freezes')
+            ON CONFLICT DO NOTHING
+        """)
+        conn.commit()
+        sys.stderr.write("[init_db] R5 Blackout Dates applied\n")
+        sys.stderr.flush()
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R5 FAILED: {e}\n")
+        sys.stderr.flush()
+
 # Release 9 · Cuti Bersama 2026
     try:
         c.execute("""
@@ -798,6 +829,17 @@ def apply_leave():
         e=datetime.strptime(data['end_date'],'%Y-%m-%d').date()
         days=sum(1 for i in range((e-s).days+1) if (s+timedelta(days=i)).weekday()<5)
         start_date=data['start_date']; end_date=data['end_date']; dates_json=None
+
+# R5: Check blackout dates
+    dates_to_check = sel if 'dates' in data and data['dates'] else [str(s + timedelta(days=i)) for i in range((e-s).days+1) if (s + timedelta(days=i)).weekday()<5]
+    conn_bd = get_db(); c_bd = conn_bd.cursor()
+    for date_str in dates_to_check:
+        c_bd.execute("SELECT * FROM blackout_dates WHERE start_date <= %s AND end_date >= %s LIMIT 1", (date_str, date_str))
+        blocking = c_bd.fetchone()
+        if blocking:
+            conn_bd.close()
+            return jsonify({'error': f"Cannot apply leave during blackout: {blocking['reason']}. Contact HR for override.", 'is_blackout': True}), 400
+    conn_bd.close()
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM leave_balances WHERE user_id=%s AND leave_type_id=%s AND year=%s",
               (uid,data['leave_type_id'],int(start_date[:4]))); bal=row(c)
@@ -1293,6 +1335,155 @@ def audit_log_export():
     conn.close()
     return Response(out.getvalue(),mimetype='text/csv',
                     headers={'Content-Disposition':'attachment; filename=ontime_audit_log.csv'})
+
+# ── R5: Blackout Dates API ──────────────────────────────────────────────────
+@app.route('/api/blackout-dates', methods=['GET'])
+def list_blackout_dates():
+    """HR Admin: List all blackout dates."""
+    err = require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""SELECT id, start_date, end_date, reason, applies_to, department_id, user_ids_json, auto_reject, created_at 
+                 FROM blackout_dates ORDER BY start_date DESC""")
+    rows = c.fetchall()
+    conn.close()
+    result = [dict(r) for r in rows]
+    return jsonify(result)
+
+@app.route('/api/blackout-dates/save', methods=['POST'])
+def save_blackout_date():
+    """HR Admin: Create or update blackout date."""
+    err = require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    data = request.json
+    bd_id = data.get('id')
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+    reason = data.get('reason', '')
+    applies_to = data.get('applies_to', 'all')
+    department_id = data.get('department_id')
+    user_ids_json = data.get('user_ids_json')
+    auto_reject = data.get('auto_reject', True)
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        if bd_id:
+            c.execute("""UPDATE blackout_dates 
+                         SET start_date=%s, end_date=%s, reason=%s, applies_to=%s, department_id=%s, user_ids_json=%s, auto_reject=%s
+                         WHERE id=%s""",
+                      (start_date, end_date, reason, applies_to, department_id, user_ids_json, auto_reject, bd_id))
+        else:
+            c.execute("""INSERT INTO blackout_dates (start_date, end_date, reason, applies_to, department_id, user_ids_json, auto_reject, created_by)
+                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                      (start_date, end_date, reason, applies_to, department_id, user_ids_json, auto_reject, session['user_id']))
+        
+        log_audit(c, session['user_id'], 'blackout_date_created', entity_type='blackout_dates',
+                  after={'start_date': start_date, 'end_date': end_date, 'reason': reason})
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/blackout-dates/delete', methods=['POST'])
+def delete_blackout_date():
+    """HR Admin: Delete blackout date."""
+    err = require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    data = request.json
+    bd_id = data.get('id')
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("DELETE FROM blackout_dates WHERE id=%s", (bd_id,))
+        log_audit(c, session['user_id'], 'blackout_date_deleted', entity_type='blackout_dates', entity_id=bd_id)
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/blackout-dates/check', methods=['POST'])
+def check_blackout_dates():
+    """Check if dates fall within any blackout period."""
+    data = request.json
+    dates = data.get('dates', [])
+    user_id = session.get('user_id')
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    # Get user's department
+    c.execute("SELECT department FROM users WHERE id=%s", (user_id,))
+    user = c.fetchone()
+    user_dept = user['department'] if user else None
+    
+    for date_str in dates:
+        c.execute("""SELECT * FROM blackout_dates 
+                     WHERE start_date <= %s AND end_date >= %s 
+                     LIMIT 1""", (date_str, date_str))
+        blocking = c.fetchone()
+        
+        if blocking:
+            # Check if applies to this user
+            applies_to = blocking['applies_to']
+            
+            if applies_to == 'all':
+                conn.close()
+                return jsonify({
+                    'is_blackout': True,
+                    'blocking_blackout': {
+                        'id': blocking['id'],
+                        'reason': blocking['reason'],
+                        'start_date': str(blocking['start_date']),
+                        'end_date': str(blocking['end_date']),
+                    }
+                })
+            elif applies_to == 'department' and blocking['department_id']:
+                c.execute("SELECT id FROM branches WHERE id=%s", (blocking['department_id'],))
+                dept = c.fetchone()
+                if dept and user_dept:
+                    conn.close()
+                    return jsonify({
+                        'is_blackout': True,
+                        'blocking_blackout': {
+                            'id': blocking['id'],
+                            'reason': blocking['reason'],
+                        }
+                    })
+            elif applies_to == 'users' and blocking['user_ids_json']:
+                try:
+                    user_ids = json.loads(blocking['user_ids_json'])
+                    if user_id in user_ids:
+                        conn.close()
+                        return jsonify({
+                            'is_blackout': True,
+                            'blocking_blackout': {
+                                'id': blocking['id'],
+                                'reason': blocking['reason'],
+                            }
+                        })
+                except:
+                    pass
+    
+    conn.close()
+    return jsonify({'is_blackout': False})
 
 # ── R9: Cuti Bersama API ────────────────────────────────────────────────────
 @app.route('/api/cuti-bersama/list', methods=['GET'])
