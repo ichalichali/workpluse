@@ -890,55 +890,55 @@ function openCorrectionModal(date, originalPunchIn, originalPunchOut, originalSt
   overlay.id = 'correction-modal-overlay';
   
   const bodyHtml = `
-    <div style="display:grid;gap:16px">
-      <div>
-        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Date</label>
-        <input type="text" value="${date}" readonly class="input" style="background:#f5f5f5;cursor:not-allowed">
+    <div id="correction-alert"></div>
+    
+    <div class="form-group">
+      <label>Date</label>
+      <input type="text" value="${date}" readonly style="background:#f5f5f5;cursor:not-allowed">
+    </div>
+    
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label>Original Punch In</label>
+        <input type="text" value="${originalPunchIn ? originalPunchIn.slice(0,5) : '—'}" readonly style="background:#f5f5f5;cursor:not-allowed">
       </div>
-      
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div>
-          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Original Punch In</label>
-          <input type="text" value="${originalPunchIn ? originalPunchIn.slice(0,5) : '—'}" readonly class="input" style="background:#f5f5f5;cursor:not-allowed">
-        </div>
-        <div>
-          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Corrected Punch In</label>
-          <input type="time" id="corrected-in" class="input">
-        </div>
+      <div class="form-group">
+        <label>Corrected Punch In</label>
+        <input type="time" id="corrected-in">
       </div>
-      
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div>
-          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Original Punch Out</label>
-          <input type="text" value="${originalPunchOut ? originalPunchOut.slice(0,5) : '—'}" readonly class="input" style="background:#f5f5f5;cursor:not-allowed">
-        </div>
-        <div>
-          <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Corrected Punch Out</label>
-          <input type="time" id="corrected-out" class="input">
-        </div>
+    </div>
+    
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label>Original Punch Out</label>
+        <input type="text" value="${originalPunchOut ? originalPunchOut.slice(0,5) : '—'}" readonly style="background:#f5f5f5;cursor:not-allowed">
       </div>
-      
-      <div>
-        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Status (Optional)</label>
-        <select id="corrected-status" class="input">
-          <option value="">— Keep Original —</option>
-          <option value="ontime">On-Time</option>
-          <option value="late">Late</option>
-          <option value="absent">Absent</option>
-          <option value="leave">On Leave</option>
-        </select>
+      <div class="form-group">
+        <label>Corrected Punch Out</label>
+        <input type="time" id="corrected-out">
       </div>
-      
-      <div>
-        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Reason for Correction *</label>
-        <textarea id="correction-reason" class="input" rows="4" placeholder="e.g., Traffic delay with proof in email, forgot to clock out, GPS glitch..."></textarea>
-      </div>
-      
-      <div>
-        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Attachment (Optional)</label>
-        <input type="file" id="correction-attachment" class="input">
-        <small style="color:var(--grey-600);display:block;margin-top:4px">Email receipt, photo proof, etc.</small>
-      </div>
+    </div>
+    
+    <div class="form-group">
+      <label>Status (Optional)</label>
+      <select id="corrected-status">
+        <option value="">— Keep Original —</option>
+        <option value="ontime">On-Time</option>
+        <option value="late">Late</option>
+        <option value="absent">Absent</option>
+        <option value="leave">On Leave</option>
+      </select>
+    </div>
+    
+    <div class="form-group">
+      <label>Reason for Correction</label>
+      <textarea id="correction-reason" rows="3" placeholder="e.g., Traffic delay with proof in email, forgot to clock out, GPS glitch…"></textarea>
+    </div>
+    
+    <div class="form-group">
+      <label>Attachment (Optional)</label>
+      <input type="file" id="correction-attachment">
+      <small style="color:var(--grey-600);display:block;margin-top:6px">Email receipt, photo proof, etc.</small>
     </div>`;
   
   overlay.innerHTML = `
@@ -947,7 +947,7 @@ function openCorrectionModal(date, originalPunchIn, originalPunchOut, originalSt
         <h3>🔧 Request Attendance Correction</h3>
         <button class="modal-close" id="modal-close-btn">✕</button>
       </div>
-      <div class="modal-body" style="max-height:70vh;overflow-y:auto">${bodyHtml}</div>
+      <div class="modal-body">${bodyHtml}</div>
       <div class="modal-footer">
         <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
         <button class="btn btn-primary" id="modal-confirm">Submit Correction</button>
@@ -964,38 +964,7 @@ function openCorrectionModal(date, originalPunchIn, originalPunchOut, originalSt
     const correctedIn = document.getElementById('corrected-in')?.value;
     const correctedOut = document.getElementById('corrected-out')?.value;
     const correctedStatus = document.getElementById('corrected-status')?.value || originalStatus;
-    const reason = document.getElementById('correction-reason')?.value;
-    
-    if (!reason) {
-      showToast('error', 'Please provide a reason for correction');
-      return false;
-    }
-    
-    const res = await api('POST', '/attendance/request-correction', {
-      date,
-      original_punch_in: originalPunchIn,
-      original_punch_out: originalPunchOut,
-      original_status: originalStatus,
-      corrected_punch_in: correctedIn || null,
-      corrected_punch_out: correctedOut || null,
-      corrected_status: correctedStatus,
-      reason,
-      attachment_url: null
-    });
-    
-    if (res.ok) {
-      showToast('success', 'Correction request submitted to your manager!');
-      document.querySelector(`[data-date="${date}"] .att-checkbox`).checked = false;
-      updateSelectAll();
-      return true;
-    } else {
-      showToast('error', res.data.error || 'Failed to submit correction');
-      return false;
-    }
-  };
-  
-  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-}
+    const reason = document.getElem
 
 function closeCorrectionModal() {
   const modal = document.getElementById('correction-modal-overlay');
