@@ -293,6 +293,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='audit'?'active':''}" onclick="navigate('audit')">
           <span class="nav-icon">📋</span> Audit Log
         </button>
+        <button class="nav-item ${state.page==='blackout-dates'?'active':''}" onclick="navigate('blackout-dates')">
+          <span class="nav-icon">⛔</span> Blackout Dates
+        </button>
         <button class="nav-item ${state.page==='deletion-requests'?'active':''}" onclick="navigate('deletion-requests')">
           <span class="nav-icon">🗑️</span> Deletion Requests
         </button>
@@ -345,6 +348,7 @@ async function loadPage() {
     case 'settings':    return renderSettings();
     case 'reports':     return renderReports();
     case 'audit':       return renderAudit();
+    case 'blackout-dates': return renderBlackoutDates();
     case 'pdp':         return renderPDP();
     case 'deletion-requests': {
       if (!pdpState.deletionRequests.length) {
@@ -1025,6 +1029,7 @@ async function showApplyModal() {
       </div>
     </div>
     <div class="alert alert-info" id="days-calc" style="margin-top:12px">Click dates to select your leave days (weekends auto-skipped)</div>
+    <button type="button" class="btn btn-secondary" onclick="openCutiBersamaModal()" style="margin-bottom:12px">🇮🇩 View Cuti Bersama Dates</button>
     <div class="form-group" style="margin-top:12px"><label>Reason</label><textarea id="lt-reason" rows="2" placeholder="Brief description of your leave reason…"></textarea></div>`,
     async () => {
       const ltId   = document.getElementById('lt-select').value;
@@ -1032,6 +1037,10 @@ async function showApplyModal() {
       const sorted = [...selectedDates].sort();
       if (sorted.length === 0) { document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">Please select at least one leave day</div>`; return false; }
       // Send the exact selected dates so backend counts only those days
+      const isAllowed = await checkBlackoutBeforeSubmit(sorted);
+      if (!isAllowed) {
+        return false;
+      }
       const r = await api('POST', '/leave/apply', { leave_type_id: parseInt(ltId), dates: sorted, reason });
       if (!r.ok) { document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">⚠ ${r.data.error}</div>`; return false; }
       await loadLeaveData();
@@ -3036,3 +3045,113 @@ const MOTIVATIONAL_QUOTES = [
   "Great things never come from comfort zones.",
   "Push yourself daily for remarkable results.",
 ];
+
+// R5 & R9 FUNCTIONS APPENDED SUCCESSFULLY
+
+const blackoutState = { dates: [], filters: {} };
+
+async function renderBlackoutDates() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div class="page-header flex justify-between items-center"><div><h1>⛔ Blackout Dates</h1><p>Set periods when leaves cannot be applied</p></div><button class="btn btn-primary" onclick="showBlackoutModal()">+ Add Blackout Period</button></div><div id="blackout-content">Loading…</div>';
+  await loadBlackoutDates();
+}
+
+async function loadBlackoutDates() {
+  const r = await api('GET', '/api/blackout-dates');
+  const dates = r.ok ? r.data : [];
+  blackoutState.dates = dates;
+  const today = new Date();
+  const html = '<div class="card"><div class="card-header"><h3>Blackout Periods</h3><span class="text-sm text-muted">' + dates.length + ' active</span></div><div class="table-wrap"><table><thead><tr><th>Period</th><th>Reason</th><th>Applies To</th><th>Status</th><th></th></tr></thead><tbody>' + (dates.length ? dates.map(d => {
+    const start = new Date(d.start_date);
+    const end = new Date(d.end_date);
+    let status = '⚪ Expired';
+    if (end >= today && start <= today) status = '🔴 Active Now';
+    else if (start > today) status = '⏳ Upcoming';
+    const scopeLabel = d.applies_to === 'all' ? '👥 All Employees' : d.applies_to === 'department' ? '🏢 Department' : '👤 Users';
+    return '<tr><td><strong>' + d.start_date + '</strong> → ' + d.end_date + '</td><td>' + (d.reason||'—') + '</td><td>' + scopeLabel + '</td><td>' + status + '</td><td><button class="btn btn-ghost btn-sm" onclick="showBlackoutModal(' + JSON.stringify(d).replace(/"/g,'\\\"') + ')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteBlackoutDate(' + d.id + ')">Delete</button></td></tr>';
+  }).join('') : '<tr><td colspan="5" style="text-align:center;padding:32px;color:#94a3b8">No blackout periods yet</td></tr>') + '</tbody></table></div></div>';
+  document.getElementById('blackout-content').innerHTML = html;
+}
+
+function showBlackoutModal(bd={}) {
+  const isEdit = !!bd.id;
+  showModal(isEdit ? 'Edit Blackout' : 'Add Blackout Period', '<div id="bd-alert"></div><div class="form-row"><div class="form-group"><label>Start Date</label><input id="bd-start" type="date" value="' + (bd.start_date||'') + '"/></div><div class="form-group"><label>End Date</label><input id="bd-end" type="date" value="' + (bd.end_date||'') + '"/></div></div><div class="form-group"><label>Reason</label><input id="bd-reason" value="' + (bd.reason||'') + '" placeholder="e.g., Year-end freeze"/></div><div class="form-group"><label>Applies To</label><select id="bd-scope"><option value="all" ' + (bd.applies_to==='all'?'selected':'') + '>All Employees</option><option value="department" ' + (bd.applies_to==='department'?'selected':'') + '>Department</option></select></div><label><input type="checkbox" id="bd-auto-reject" ' + (bd.auto_reject!==false?'checked':'') + '> Auto-reject leaves</label>', async () => {
+    const data = { id: bd.id||null, start_date: document.getElementById('bd-start').value, end_date: document.getElementById('bd-end').value, reason: document.getElementById('bd-reason').value, applies_to: document.getElementById('bd-scope').value, auto_reject: document.getElementById('bd-auto-reject').checked };
+    if (!data.start_date || !data.end_date) { document.getElementById('bd-alert').innerHTML = '<div class="alert alert-error">Dates required</div>'; return false; }
+    const r = await api('POST', '/api/blackout-dates/save', data);
+    if (!r.ok) { document.getElementById('bd-alert').innerHTML = '<div class="alert alert-error">Error: ' + r.data.error + '</div>'; return false; }
+    showToast('success', isEdit ? 'Updated' : 'Added');
+    await loadBlackoutDates();
+    return true;
+  });
+}
+
+async function deleteBlackoutDate(id) {
+  if (!confirm('Delete this blackout period?')) return;
+  const r = await api('POST', '/api/blackout-dates/delete', { id });
+  if (r.ok) { showToast('success', 'Deleted'); await loadBlackoutDates(); }
+  else showToast('error', r.data.error);
+}
+
+const cutiState = { dates: [], selectedDates: new Set() };
+
+async function openCutiBersamaModal() {
+  const r = await api('GET', '/api/cuti-bersama/list?year=2026');
+  if (!r.ok) { showToast('error', 'Failed to load Cuti Bersama'); return; }
+  cutiState.dates = r.data || [];
+  cutiState.selectedDates.clear();
+  showModal('🇮🇩 Cuti Bersama 2026', '<div id="cuti-alert"></div><div id="cuti-calendar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px;padding:8px;background:#f8fafc;border-radius:6px"></div><div id="cuti-selected"><span>Selected: <span id="cuti-count">0</span> days</span><div id="cuti-list" style="font-size:11px;margin-top:4px"></div></div>', async () => {
+    const sorted = [...cutiState.selectedDates].sort();
+    if (!sorted.length) { document.getElementById('cuti-alert').innerHTML = '<div class="alert alert-error">Select at least one date</div>'; return false; }
+    const r = await api('POST', '/api/cuti-bersama/apply', { dates: sorted });
+    if (!r.ok) { document.getElementById('cuti-alert').innerHTML = '<div class="alert alert-error">Error: ' + r.data.error + '</div>'; return false; }
+    showToast('success', 'Cuti applied: ' + sorted.length + ' days');
+    await loadLeaveData();
+    return true;
+  }, 'modal-lg');
+  renderCutiCalendar();
+}
+
+function renderCutiCalendar() {
+  const cal = document.getElementById('cuti-calendar');
+  if (!cal) return;
+  ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d => {
+    const el = document.createElement('div');
+    el.style.cssText = 'font-weight:600;text-align:center;font-size:11px;color:#64748b;padding:4px 0';
+    el.textContent = d;
+    cal.appendChild(el);
+  });
+  const year = 2026;
+  for (let m = 0; m < 12; m++) {
+    const firstDay = new Date(year, m, 1).getDay();
+    const daysInMonth = new Date(year, m+1, 0).getDate();
+    for (let i = 0; i < firstDay; i++) cal.appendChild(document.createElement('div'));
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = year + '-' + String(m+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+      const isCuti = cutiState.dates.some(c => c.date === dateStr);
+      const isSelected = cutiState.selectedDates.has(dateStr);
+      const el = document.createElement('div');
+      el.style.cssText = 'padding:4px;text-align:center;font-size:11px;border-radius:4px;' + (isCuti ? 'background:#fef3c7;border:1px solid #fbbf24;cursor:pointer' : 'background:#f1f5f9;color:#9ca3af') + (isSelected ? ';background:#86efac;border:1px solid #22c55e;font-weight:600' : '');
+      el.textContent = d;
+      if (isCuti) el.onclick = () => { cutiState.selectedDates.has(dateStr) ? cutiState.selectedDates.delete(dateStr) : cutiState.selectedDates.add(dateStr); updateCutiSel(); };
+      cal.appendChild(el);
+    }
+  }
+  updateCutiSel();
+}
+
+async function updateCutiSel() {
+  const sorted = [...cutiState.selectedDates].sort();
+  let workDays = sorted.filter(d => new Date(d).getDay() > 0 && new Date(d).getDay() < 6).length;
+  const countEl = document.getElementById('cuti-count');
+  if (countEl) countEl.textContent = workDays;
+  const listEl = document.getElementById('cuti-list');
+  if (listEl) listEl.innerHTML = sorted.length ? sorted.map(d => '<span style="display:inline-block;padding:1px 4px;background:#d1fae5;border-radius:3px;margin-right:4px;font-size:10px">' + d + '</span>').join('') : '<span style="color:#9ca3af">—</span>';
+}
+
+async function checkBlackoutBeforeSubmit(dates) {
+  const r = await api('POST', '/api/blackout-dates/check', { dates });
+  if (!r.ok) { showToast('error', 'Blackout check failed'); return false; }
+  if (r.data.is_blackout) { showToast('error', 'Leave blocked during: ' + (r.data.blocking_blackout?.reason || 'Blackout')); return false; }
+  return true;
+}
