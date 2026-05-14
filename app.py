@@ -361,7 +361,55 @@ def init_db():
                     c.execute("INSERT INTO attendance (user_id,date,punch_in,punch_out,status) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                               (uid,d.isoformat(),f"{ph:02d}:{pm:02d}:00",f"{random.randint(17,19):02d}:{random.randint(0,59):02d}:00",st))
                 except: pass
-
+# Release 9 · Cuti Bersama 2026
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS cuti_bersama (
+                id SERIAL PRIMARY KEY,
+                date DATE NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                deduction_type TEXT DEFAULT 'annual',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_cuti_year ON cuti_bersama(year)")
+        
+        # Seed 13 dates for 2026
+        cuti_dates = [
+            ('2026-01-29', 'Isra & Miraj', 2026, 'annual'),
+            ('2026-02-10', 'Tahun Baru Imlek', 2026, 'annual'),
+            ('2026-03-16', 'Nyepi', 2026, 'annual'),
+            ('2026-05-01', 'Hari Buruh', 2026, 'annual'),
+            ('2026-05-26', 'Hari Raya (Lebaran)', 2026, 'annual'),
+            ('2026-05-27', 'Hari Raya (Lebaran)', 2026, 'annual'),
+            ('2026-06-01', 'Pancasila Day', 2026, 'annual'),
+            ('2026-06-04', 'Cuti Bersama Lebaran', 2026, 'annual'),
+            ('2026-06-05', 'Cuti Bersama Lebaran', 2026, 'annual'),
+            ('2026-08-17', 'Independence Day', 2026, 'annual'),
+            ('2026-09-16', 'Hari Raya (Haji)', 2026, 'annual'),
+            ('2026-12-25', 'Christmas Day', 2026, 'annual'),
+            ('2026-12-26', 'Cuti Bersama Natal', 2026, 'annual'),
+        ]
+        for date, name, year, dtype in cuti_dates:
+            c.execute("""
+                INSERT INTO cuti_bersama (date, name, year, deduction_type)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+            """, (date, name, year, dtype))
+        
+        c.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R9_cuti_bersama', 'Cuti Bersama 2026 - 13 joint holidays')
+            ON CONFLICT DO NOTHING
+        """)
+        conn.commit()
+        sys.stderr.write("[init_db] R9 Cuti Bersama applied (13 dates)\n")
+        sys.stderr.flush()
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R9 FAILED: {e}\n")
+        sys.stderr.flush()
     conn.commit(); conn.close()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
