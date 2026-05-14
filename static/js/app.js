@@ -964,15 +964,41 @@ function openCorrectionModal(date, originalPunchIn, originalPunchOut, originalSt
     const correctedIn = document.getElementById('corrected-in')?.value;
     const correctedOut = document.getElementById('corrected-out')?.value;
     const correctedStatus = document.getElementById('corrected-status')?.value || originalStatus;
-    const reason = document.getElem
-
-function closeCorrectionModal() {
-  const modal = document.getElementById('correction-modal-overlay');
-  if (modal) modal.remove();
+    const reason = document.getElementById('correction-reason')?.value;
+    
+    if (!reason || reason.trim() === '') {
+      document.getElementById('correction-alert').innerHTML = `<div class="alert alert-error">⚠ Please provide a reason for correction</div>`;
+      return false;
+    }
+    
+    const res = await api('POST', '/attendance/request-correction', {
+      date,
+      original_punch_in: originalPunchIn,
+      original_punch_out: originalPunchOut,
+      original_status: originalStatus,
+      corrected_punch_in: correctedIn || null,
+      corrected_punch_out: correctedOut || null,
+      corrected_status: correctedStatus,
+      reason,
+      attachment_url: null
+    });
+    
+    if (res.ok) {
+      showToast('success', 'Correction request submitted to your manager!');
+      document.querySelector(`[data-date="${date}"] .att-checkbox`).checked = false;
+      updateSelectAll();
+      return true;
+    } else {
+      document.getElementById('correction-alert').innerHTML = `<div class="alert alert-error">⚠ ${res.data.error || 'Failed to submit correction'}</div>`;
+      return false;
+    }
+  };
+  
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 }
 
 function closeCorrectionModal() {
-  const modal = document.getElementById('correction-modal');
+  const modal = document.getElementById('correction-modal-overlay');
   if (modal) modal.remove();
 }
 
