@@ -392,6 +392,45 @@ def init_db():
         sys.stderr.write(f"[init_db] R5 FAILED: {e}\n")
         sys.stderr.flush()
 
+# Release 7 · Attendance Regularization
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS attendance_corrections (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                date TEXT NOT NULL,
+                original_punch_in TEXT,
+                original_punch_out TEXT,
+                original_status TEXT,
+                corrected_punch_in TEXT,
+                corrected_punch_out TEXT,
+                corrected_status TEXT,
+                reason TEXT NOT NULL,
+                attachment_url TEXT,
+                status TEXT DEFAULT 'pending',
+                manager_id INTEGER REFERENCES users(id),
+                manager_approved_at TIMESTAMP WITH TIME ZONE,
+                hr_id INTEGER REFERENCES users(id),
+                hr_acknowledged_at TIMESTAMP WITH TIME ZONE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_correction_user ON attendance_corrections(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_correction_status ON attendance_corrections(status)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_correction_date ON attendance_corrections(date)")
+        c.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R7_attendance_regularization', 'Attendance Regularization - Punch correction requests')
+            ON CONFLICT DO NOTHING
+        """)
+        conn.commit()
+        sys.stderr.write("[init_db] R7 Attendance Regularization applied\n")
+        sys.stderr.flush()
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R7 FAILED: {e}\n")
+        sys.stderr.flush()
+
 # Release 9 · Cuti Bersama 2026
     try:
         c.execute("""
@@ -1484,6 +1523,250 @@ def check_blackout_dates():
     
     conn.close()
     return jsonify({'is_blackout': False})
+
+# ── R7: Attendance Regularization API ────────────────────────────────────
+@app.route('/api/attendance/request-correction', methods=['POST'])
+def request_attendance_correction():
+    """Employee requests punch time/status correction for current week."""
+    err = require_login()
+    if err: return err
+    
+    uid = session['user_id']
+    data = request.json
+    correction_date = data.get('date')
+    original_punch_in = data.get('original_punch_in')
+    original_punch_out = data.get('original_punch_out')
+    original_status = data.get('original_status')
+    corrected_punch_in = data.get('corrected_punch_in')
+    corrected_punch_out = data.get('corrected_punch_out')
+    corrected_status = data.get('corrected_status')
+    reason = data.get('reason', '')
+    attachment_url = data.get('attachment_url')
+    
+    # Validate: only current work week
+    correction_d = datetime.strptime(correction_date, '%Y-%m-%d').date()
+    today = today_local()
+    monday = today - timedelta(days=today.weekday())  # Start of current week
+    sunday = monday + timedelta(days=6)
+    
+    if not (monday <= correction_d <= sunday):
+        return jsonify({'error': 'Can only request corrections for current work week (Mon-Sun)'}), 400
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        c.execute("""
+            INSERT INTO attendance_corrections (user_id, date, original_punch_in, original_punch_out, original_status, 
+                                                corrected_punch_in, corrected_punch_out, corrected_status, reason, attachment_url, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+        """, (uid, correction_date, original_punch_in, original_punch_out, original_status,
+              corrected_punch_in, corrected_punch_out, corrected_status, reason, attachment_url))
+        
+        # Get manager for notification
+        c.execute("SELECT manager_id FROM users WHERE id=%s", (uid,))
+        user = c.fetchone()
+        manager_id = user['manager_id'] if user else None
+        
+        log_audit(c, uid, 'attendance_correction_requested', entity_type='attendance_corrections',
+                  after={'date': correction_date, 'reason': reason})
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'ok': True, 'message': 'Correction request submitted to your manager'})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/attendance/corrections/my-requests', methods=['GET'])
+def get_my_corrections():
+    """Employee views their own correction requests."""
+    err = require_login()
+    if err: return err
+    
+    uid = session['user_id']
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""SELECT * FROM attendance_corrections 
+                 WHERE user_id=%s ORDER BY created_at DESC""", (uid,))
+    rows = c.fetchall()
+    conn.close()
+    
+    result = [dict(r) for r in rows]
+    return jsonify(result)
+
+@app.route('/api/attendance/corrections/pending', methods=['GET'])
+def get_pending_corrections():
+    """Manager views pending corrections for their team."""
+    err = require_login()
+    if err: return err
+    
+    uid = session['user_id']
+    role = session['role']
+    
+    if role == 'manager':
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""SELECT ac.*, u.name, u.email FROM attendance_corrections ac
+                     JOIN users u ON ac.user_id = u.id
+                     WHERE u.manager_id=%s AND ac.status='pending'
+                     ORDER BY ac.created_at ASC""", (uid,))
+    elif role == 'hr_admin':
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""SELECT ac.*, u.name, u.email, m.name as manager_name FROM attendance_corrections ac
+                     JOIN users u ON ac.user_id = u.id
+                     LEFT JOIN users m ON ac.manager_id = m.id
+                     ORDER BY ac.created_at ASC""")
+    else:
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    rows = c.fetchall()
+    conn.close()
+    
+    result = [dict(r) for r in rows]
+    return jsonify(result)
+
+@app.route('/api/attendance/corrections/manager-approve', methods=['POST'])
+def manager_approve_correction():
+    """Manager approves correction request."""
+    err = require_login()
+    if err: return err
+    
+    if session['role'] != 'manager':
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    data = request.json
+    correction_id = data.get('id')
+    approved = data.get('approved', True)  # True = approve, False = reject
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        c.execute("SELECT * FROM attendance_corrections WHERE id=%s", (correction_id,))
+        correction = c.fetchone()
+        
+        if not correction:
+            conn.close()
+            return jsonify({'error': 'Correction not found'}), 404
+        
+        # Verify manager is supervising this user
+        c.execute("SELECT id FROM users WHERE id=%s AND manager_id=%s", 
+                  (correction['user_id'], session['user_id']))
+        if not c.fetchone():
+            conn.close()
+            return jsonify({'error': 'Forbidden'}), 403
+        
+        if approved:
+            c.execute("""UPDATE attendance_corrections 
+                         SET status='manager_approved', manager_id=%s, manager_approved_at=%s
+                         WHERE id=%s""",
+                      (session['user_id'], now_local().isoformat(), correction_id))
+            log_audit(c, session['user_id'], 'correction_manager_approved', 
+                      entity_type='attendance_corrections', entity_id=correction_id)
+        else:
+            c.execute("""UPDATE attendance_corrections 
+                         SET status='rejected', manager_id=%s, manager_approved_at=%s
+                         WHERE id=%s""",
+                      (session['user_id'], now_local().isoformat(), correction_id))
+            log_audit(c, session['user_id'], 'correction_rejected', 
+                      entity_type='attendance_corrections', entity_id=correction_id)
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'ok': True, 'message': 'Manager approval recorded'})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/attendance/corrections/hr-acknowledge', methods=['POST'])
+def hr_acknowledge_correction():
+    """HR acknowledges and applies correction to actual attendance."""
+    err = require_login()
+    if err: return err
+    
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    data = request.json
+    correction_id = data.get('id')
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        c.execute("SELECT * FROM attendance_corrections WHERE id=%s", (correction_id,))
+        correction = c.fetchone()
+        
+        if not correction:
+            conn.close()
+            return jsonify({'error': 'Correction not found'}), 404
+        
+        # Apply correction to attendance table
+        c.execute("""UPDATE attendance 
+                     SET punch_in=%s, punch_out=%s, status=%s
+                     WHERE user_id=%s AND date=%s""",
+                  (correction['corrected_punch_in'], correction['corrected_punch_out'], 
+                   correction['corrected_status'], correction['user_id'], correction['date']))
+        
+        # Mark correction as acknowledged
+        c.execute("""UPDATE attendance_corrections 
+                     SET status='hr_acknowledged', hr_id=%s, hr_acknowledged_at=%s
+                     WHERE id=%s""",
+                  (session['user_id'], now_local().isoformat(), correction_id))
+        
+        log_audit(c, session['user_id'], 'correction_hr_acknowledged_and_applied',
+                  entity_type='attendance', entity_id=correction['user_id'],
+                  after={'date': correction['date'], 'new_status': correction['corrected_status']})
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'ok': True, 'message': 'Correction applied to attendance'})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 400
+    
+@app.route('/api/attendance/corrections/upload', methods=['POST'])
+def upload_correction_attachment():
+    """Upload attachment for correction request."""
+    err = require_login()
+    if err: return err
+    
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # For now, just store filename and path (you can add cloud storage later)
+    filename = f"{session['user_id']}_{int(now_local().timestamp())}_{file.filename}"
+    
+    try:
+        # Create uploads folder if it doesn't exist
+        import os
+        os.makedirs('uploads', exist_ok=True)
+        filepath = os.path.join('uploads', filename)
+        file.save(filepath)
+        
+        return jsonify({
+            'ok': True,
+            'filename': filename,
+            'url': f'/uploads/{filename}'
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 # ── R9: Cuti Bersama API ────────────────────────────────────────────────────
 @app.route('/api/cuti-bersama/list', methods=['GET'])
