@@ -1294,6 +1294,19 @@ def audit_log_export():
     return Response(out.getvalue(),mimetype='text/csv',
                     headers={'Content-Disposition':'attachment; filename=ontime_audit_log.csv'})
 
+# ── R9: Cuti Bersama API ────────────────────────────────────────────────────
+@app.route('/api/cuti-bersama/list', methods=['GET'])
+def get_cuti_bersama():
+    """Fetch all cuti bersama dates for a given year."""
+    year = request.args.get('year', 2026, type=int)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id, date, name, year, deduction_type FROM cuti_bersama WHERE year=%s ORDER BY date", (year,))
+    rows = c.fetchall()
+    conn.close()
+    result = [dict(r) for r in rows]
+    return jsonify(result)
+
 # ── Serve ─────────────────────────────────────────────────────────────────────
 @app.route('/setup-db-workpulse-2026')
 def setup_db():
