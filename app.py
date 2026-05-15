@@ -2696,7 +2696,7 @@ def review_deletion():
 
 @app.route('/api/training/create', methods=['POST'])
 def create_training():
-    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    if state.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
     data = request.get_json()
     conn = get_db()
     c = conn.cursor()
@@ -2738,7 +2738,7 @@ def create_training():
 
 @app.route('/api/training/list', methods=['GET'])
 def list_trainings():
-    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    if state.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
     conn = get_db()
     c = conn.cursor()
     c.execute("""
@@ -2799,7 +2799,7 @@ def get_training(training_id):
 
 @app.route('/api/training/<int:training_id>', methods=['PUT'])
 def update_training(training_id):
-    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    if state.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
     data = request.get_json()
     conn = get_db()
     c = conn.cursor()
@@ -2840,7 +2840,7 @@ def update_training(training_id):
 
 @app.route('/api/training/<int:training_id>', methods=['DELETE'])
 def delete_training(training_id):
-    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    if state.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
     conn = get_db()
     c = conn.cursor()
     try:

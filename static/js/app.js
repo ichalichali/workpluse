@@ -289,7 +289,7 @@ function renderShell() {
           <span class="nav-icon">🔒</span> Profil & Privasi
         </button>
       </div>
-      ${isManager ? `
+      ${(isManager || isHR) ? `
       <div class="sidebar-section">
         <div class="sidebar-section-label">Management</div>
         <button class="nav-item ${state.page==='team'?'active':''}" onclick="navigate('team')">
@@ -298,6 +298,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='approvals'?'active':''}" onclick="navigate('approvals')">
           <span class="nav-icon">✅</span> Leave Approvals
           ${state.pendingCount > 0 ? `<span class="nav-badge">${state.pendingCount}</span>` : ''}
+        </button>
+        <button class="nav-item ${state.page==='training-management'?'active':''}" onclick="navigate('training-management')">
+          <span class="nav-icon">🎓</span> Training & Certs
         </button>
       </div>` : ''}
       ${isHR ? `
@@ -360,18 +363,21 @@ async function doLogout() {
 // ── Page Dispatcher ───────────────────────────────────────────────────────────
 async function loadPage() {
   switch(state.page) {
-    case 'dashboard':   return renderDashboard();
-    case 'attendance':  return renderAttendance();
-    case 'leave':       return renderLeave();
-    case 'team':        return renderTeam();
-    case 'approvals':   return renderApprovals();
-    case 'employees':   return renderEmployees();
-    case 'branches':    return renderBranches();
-    case 'settings':    return renderSettings();
-    case 'reports':     return renderReports();
-    case 'audit':       return renderAudit();
-    case 'blackout-dates': return renderBlackoutDates();
-    case 'pdp':         return renderPDP();
+    case 'dashboard':             return renderDashboard();
+    case 'attendance':            return renderAttendance();
+    case 'leave':                 return renderLeave();
+    case 'team':                  return renderTeam();
+    case 'approvals':             return renderApprovals();
+    case 'employees':             return renderEmployees();
+    case 'branches':              return renderBranches();
+    case 'settings':              return renderSettings();
+    case 'reports':               return renderReports();
+    case 'audit':                 return renderAudit();
+    case 'blackout-dates':        return renderBlackoutDates();
+    case 'pdp':                   return renderPDP();
+    case 'training-management':   return renderTrainingManagement();
+    case 'training-catalog':      return renderTrainingCatalog();
+    case 'training-approvals':    return renderTrainingApprovals();
     case 'deletion-requests': {
       if (!pdpState.deletionRequests.length) {
         await loadDeletionRequests();
@@ -3647,16 +3653,7 @@ async function checkBlackoutBeforeSubmit(dates) {
 // R12 TRAINING MANAGEMENT - PHASE 2 FRONTEND
 // Add these functions to app.js
 
-// ════════════════════════════════════════════════════════════════════════════
-// PAGE: Training Management (HR Admin) - Line ~368, add to loadPage switch
-// ════════════════════════════════════════════════════════════════════════════
 
-case 'training-management':
-    return renderTrainingManagement();
-case 'training-catalog':
-    return renderTrainingCatalog();
-case 'training-approvals':
-    return renderTrainingApprovals();
 
 // ════════════════════════════════════════════════════════════════════════════
 // SIDEBAR NAV BUTTON - Add to sidebar under MANAGEMENT (after Settings)
@@ -3677,8 +3674,8 @@ case 'training-approvals':
 // ════════════════════════════════════════════════════════════════════════════
 
 async function renderTrainingManagement() {
-    if (state.user.role !== 'hr_admin') {
-        showToast('error', 'HR Admin access only');
+    if (state.user.role !== 'hr_admin' && state.user.role !== 'manager') {
+        showToast('error', 'Managers and HR Admin only');
         navigate('dashboard');
         return;
     }
