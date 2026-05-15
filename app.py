@@ -2258,34 +2258,58 @@ def setup_db():
 
 @app.route('/backup-db-r6-safety', methods=['GET'])
 def backup_db():
-    """Emergency backup before R6 deployment - DOWNLOAD THIS FILE"""
-    import subprocess
-    import os
+    """Emergency backup before R6 deployment - Python version (no pg_dump needed)"""
     from datetime import datetime
     
-    db_url = os.getenv('DATABASE_URL')
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f'backup_r6_{timestamp}.sql'
-    
     try:
-        # Use pg_dump via DATABASE_URL
-        result = subprocess.run(
-            ['pg_dump', db_url, '-v'],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        if result.returncode != 0:
-            return f"<h1>Backup Failed</h1><pre>{result.stderr}</pre>", 500
+        conn = get_db()
+        c = conn.cursor()
         
-        # Return as downloadable file
-        return result.stdout, 200, {
+        # Get all tables
+        c.execute("""
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema='public' AND table_type='BASE TABLE'
+            ORDER BY table_name
+        """)
+        tables = [row[0] for row in c.fetchall()]
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'backup_r6_{timestamp}.sql'
+        
+        # Build SQL dump
+        dump = "-- OnTime Database Backup\n"
+        dump += f"-- Generated: {datetime.now().isoformat()}\n\n"
+        
+        for table in tables:
+            # Get CREATE TABLE statement
+            c.execute(f"SELECT pg_get_ddl('{table}'::regclass)")
+            ddl = c.fetchone()
+            if ddl:
+                dump += ddl[0] + ";\n\n"
+            
+            # Get data
+            c.execute(f"SELECT * FROM {table}")
+            rows = c.fetchall()
+            cols = [desc[0] for desc in c.description]
+            
+            for row in rows:
+                vals = ', '.join([
+                    f"'{v}'" if isinstance(v, str) else 'NULL' if v is None else str(v)
+                    for v in row
+                ])
+                dump += f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({vals});\n"
+            
+            dump += "\n"
+        
+        conn.close()
+        
+        return dump, 200, {
             'Content-Disposition': f'attachment; filename="{filename}"',
             'Content-Type': 'text/plain'
         }
     except Exception as e:
-        return f"<h1>Error: {e}</h1>", 500
-    
+        return f"<h1>Error: {e}</h1><pre>{str(e)}</pre>", 500
+
 @app.route('/clear-today-workpulse-2026', methods=['GET','POST'])
 def clear_today():
     """Clear ALL attendance records for today — use after timezone fix."""
