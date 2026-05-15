@@ -2256,6 +2256,36 @@ def setup_db():
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+@app.route('/backup-db-r6-safety', methods=['GET'])
+def backup_db():
+    """Emergency backup before R6 deployment - DOWNLOAD THIS FILE"""
+    import subprocess
+    import os
+    from datetime import datetime
+    
+    db_url = os.getenv('DATABASE_URL')
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'backup_r6_{timestamp}.sql'
+    
+    try:
+        # Use pg_dump via DATABASE_URL
+        result = subprocess.run(
+            ['pg_dump', db_url, '-v'],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        if result.returncode != 0:
+            return f"<h1>Backup Failed</h1><pre>{result.stderr}</pre>", 500
+        
+        # Return as downloadable file
+        return result.stdout, 200, {
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'Content-Type': 'text/plain'
+        }
+    except Exception as e:
+        return f"<h1>Error: {e}</h1>", 500
+    
 @app.route('/clear-today-workpulse-2026', methods=['GET','POST'])
 def clear_today():
     """Clear ALL attendance records for today — use after timezone fix."""
