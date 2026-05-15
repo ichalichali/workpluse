@@ -738,7 +738,7 @@ def login():
     return jsonify({'user':{'id':user['id'],'name':user['name'],'first_name':user['first_name'],'last_name':user['last_name'],
         'email':user['email'],'role':user['role'],'employee_id':user['employee_id'],
         'department':user['department'],'shift_start':user['shift_start'],'shift_end':user['shift_end'],
-        'branch_id':user['branch_id']},'punch_status':punch_status,'consent_accepted':consent_accepted})
+        'branch_id':user['branch_id'],'probation_status':user['probation_status'],'hire_date':user.get('hire_date')},'punch_status':punch_status,'consent_accepted':consent_accepted})
 
 @app.route('/api/logout',methods=['POST'])
 def logout():
