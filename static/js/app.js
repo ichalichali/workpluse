@@ -1233,12 +1233,12 @@ async function showApplyModal() {
     
     <div class="form-group">
       <label>Leave Duration</label>
-      <div style="display:flex;gap:12px;margin-top:8px">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+      <div style="display:flex;gap:24px;margin-top:8px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="radio" name="leave-duration" value="full" checked onchange="updateLeaveDuration('full')" style="cursor:pointer"/>
           Full Day
         </label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="radio" name="leave-duration" value="half" onchange="updateLeaveDuration('half')" style="cursor:pointer"/>
           Half Day
         </label>
@@ -1247,12 +1247,12 @@ async function showApplyModal() {
     
     <div class="form-group" id="session-selector" style="display:none">
       <label>Select Session</label>
-      <div style="display:flex;gap:12px;margin-top:8px">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+      <div style="display:flex;gap:24px;margin-top:8px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="radio" name="leave-session" value="morning" id="session-morning" style="cursor:pointer"/>
           <span id="morning-label">Morning (${officeHours.morning_start} - ${officeHours.morning_end})</span>
         </label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="radio" name="leave-session" value="afternoon" id="session-afternoon" style="cursor:pointer"/>
           <span id="afternoon-label">Afternoon (${officeHours.afternoon_start} - ${officeHours.afternoon_end})</span>
         </label>
