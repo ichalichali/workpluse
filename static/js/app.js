@@ -277,9 +277,6 @@ function renderShell() {
           <span class="nav-icon">✅</span> Leave Approvals
           ${state.pendingCount > 0 ? `<span class="nav-badge">${state.pendingCount}</span>` : ''}
         </button>
-        <button class="nav-item ${state.page==='delegations'?'active':''}" onclick="navigate('delegations')">
-          <span class="nav-icon">🔄</span> Manage Delegations
-        </button>
       </div>` : ''}
       ${isHR ? `
       <div class="sidebar-section">
@@ -352,7 +349,6 @@ async function loadPage() {
     case 'reports':     return renderReports();
     case 'audit':       return renderAudit();
     case 'blackout-dates': return renderBlackoutDates();
-    case 'delegations':     return renderDelegations();
     case 'pdp':         return renderPDP();
     case 'deletion-requests': {
       if (!pdpState.deletionRequests.length) {
@@ -366,7 +362,16 @@ async function loadPage() {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 async function renderDashboard() {
   const el = document.getElementById('page-content');
-  el.innerHTML = `<div class="page-header"><h1>Good ${greeting()}, ${state.user.name.split(' ')[0]} 👋</h1><p>${formatDate(new Date())}</p></div><div id="dash-body"><p>Loading…</p></div>`;
+  
+  // R4: Fetch probation status if employee
+  let probationHtml = '';
+  if (state.user.role === 'employee' && state.user.probation_status === 'active') {
+    probationHtml = `<div style="margin-top:12px;padding:8px 12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:6px;display:inline-block">
+      <span style="font-size:14px;color:#92400e">⏳ On Probation</span>
+    </div>`;
+  }
+  
+  el.innerHTML = `<div class="page-header"><h1>Good ${greeting()}, ${state.user.name.split(' ')[0]} 👋</h1><p>${formatDate(new Date())}</p>${probationHtml}</div><div id="dash-body"><p>Loading…</p></div>`;
 
   const [todayR, summaryR, balR, attR, settingsR] = await Promise.all([
     api('GET', '/attendance/today'),
@@ -1040,163 +1045,6 @@ async function submitCorrectionRequest(date, origIn, origOut, origStatus) {
   }
 }
 
-// ── R8: Manage Delegations ────────────────────────────────────────────────────
-async function loadDelegationsPage() {
-  const [myDelR, recvDelR, usersR] = await Promise.all([
-    api('GET', '/approval-delegations/my-delegations'),
-    api('GET', '/approval-delegations/active'),
-    api('GET', '/users')
-  ]);
-  
-  const myDels = myDelR.data || [];
-  const recvDels = recvDelR.data || [];
-  const users = usersR.data || [];
-  
-  // Render "Delegations I've Made"
-  const myDelsHtml = myDels.length ? `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Delegated To</th><th>Start Date</th><th>End Date</th><th>Status</th><th>Action</th></tr></thead>
-        <tbody>
-          ${myDels.map(d => `
-            <tr>
-              <td><strong>${d.delegate_name || 'Unknown'}</strong></td>
-              <td class="font-mono">${d.start_date}</td>
-              <td class="font-mono">${d.end_date}</td>
-              <td>${d.is_active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-grey">Revoked</span>'}</td>
-              <td>
-                ${d.is_active ? `<button class="btn btn-sm btn-secondary" onclick="revokeDelegation(${d.id})">🔴 Revoke</button>` : '—'}
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  ` : '<div style="padding:20px;text-align:center;color:var(--grey-600)">No delegations created yet</div>';
-  
-  // Render "Delegations I Receive"
-  const recvDelsHtml = recvDels.length ? `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>From Manager</th><th>Start Date</th><th>End Date</th><th>Days Remaining</th></tr></thead>
-        <tbody>
-          ${recvDels.map(d => {
-            const today = new Date();
-            const endDate = new Date(d.end_date);
-            const daysLeft = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
-            return `
-            <tr>
-              <td><strong>${d.delegator_name || 'Unknown'}</strong><br><small style="color:var(--grey-600)">${d.delegator_email}</small></td>
-              <td class="font-mono">${d.start_date}</td>
-              <td class="font-mono">${d.end_date}</td>
-              <td>${daysLeft > 0 ? `<span class="badge badge-info">${daysLeft} days</span>` : '<span class="badge badge-grey">Expired</span>'}</td>
-            </tr>
-          `;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-  ` : '<div style="padding:20px;text-align:center;color:var(--grey-600)">No delegations to you</div>';
-  
-  document.getElementById('my-delegations-content').innerHTML = myDelsHtml;
-  document.getElementById('received-delegations-content').innerHTML = recvDelsHtml;
-}
-
-async function openCreateDelegationModal() {
-  const usersR = await api('GET', '/users');
-  const users = usersR.data.filter(u => u.role !== 'employee') || [];
-  
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.id = 'delegation-modal-overlay';
-  
-  const bodyHtml = `
-    <div id="delegation-alert"></div>
-    
-    <div class="form-group">
-      <label>Delegate To (Manager/HR)</label>
-      <select id="delegation-delegate-id">
-        <option value="">— Select a person —</option>
-        ${users.map(u => `<option value="${u.id}">${u.name} (${u.role === 'manager' ? 'Manager' : 'HR Admin'})</option>`).join('')}
-      </select>
-    </div>
-    
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-      <div class="form-group">
-        <label>Start Date</label>
-        <input type="date" id="delegation-start-date">
-      </div>
-      <div class="form-group">
-        <label>End Date</label>
-        <input type="date" id="delegation-end-date">
-      </div>
-    </div>
-    
-    <div class="form-group">
-      <small style="color:var(--grey-600)">💡 During this period, the delegate can approve leave requests for your team. You can revoke anytime.</small>
-    </div>`;
-  
-  overlay.innerHTML = `
-    <div class="modal">
-      <div class="modal-header">
-        <h3>🔄 Create New Delegation</h3>
-        <button class="modal-close" id="modal-close-btn">✕</button>
-      </div>
-      <div class="modal-body">${bodyHtml}</div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
-        <button class="btn btn-primary" id="modal-confirm">Create Delegation</button>
-      </div>
-    </div>`;
-  
-  document.body.appendChild(overlay);
-  
-  const close = () => document.body.removeChild(overlay);
-  
-  overlay.querySelector('#modal-close-btn').onclick = close;
-  overlay.querySelector('#modal-cancel').onclick = close;
-  overlay.querySelector('#modal-confirm').onclick = async () => {
-    const delegateId = document.getElementById('delegation-delegate-id')?.value;
-    const startDate = document.getElementById('delegation-start-date')?.value;
-    const endDate = document.getElementById('delegation-end-date')?.value;
-    
-    if (!delegateId || !startDate || !endDate) {
-      document.getElementById('delegation-alert').innerHTML = `<div class="alert alert-error">⚠ Please fill all fields</div>`;
-      return false;
-    }
-    
-    const res = await api('POST', '/approval-delegations/create', {
-      delegate_id: parseInt(delegateId),
-      start_date: startDate,
-      end_date: endDate
-    });
-    
-    if (res.ok) {
-      showToast('success', 'Delegation created successfully!');
-      await loadDelegationsPage();
-      return true;
-    } else {
-      document.getElementById('delegation-alert').innerHTML = `<div class="alert alert-error">⚠ ${res.data.error || 'Failed to create delegation'}</div>`;
-      return false;
-    }
-  };
-  
-  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-}
-
-async function revokeDelegation(delegationId) {
-  if (!confirm('Are you sure you want to revoke this delegation?')) return;
-  
-  const res = await api('POST', '/approval-delegations/revoke', { id: delegationId });
-  
-  if (res.ok) {
-    showToast('success', 'Delegation revoked');
-    await loadDelegationsPage();
-  } else {
-    showToast('error', res.data.error || 'Failed to revoke delegation');
-  }
-}
-
 // ── Leave Page ────────────────────────────────────────────────────────────────
 async function renderLeave() {
   const el = document.getElementById('page-content');
@@ -1382,6 +1230,13 @@ async function showApplyModal() {
       const reason = document.getElementById('lt-reason').value;
       const sorted = [...selectedDates].sort();
       if (sorted.length === 0) { document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">Please select at least one leave day</div>`; return false; }
+      
+      // R4: Check Probation Status
+      if (state.user.probation_status === 'active') {
+        document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">⚠ Leave not allowed during probation period. Please contact HR to request an exception.</div>`;
+        return false;
+      }
+      
       // Send the exact selected dates so backend counts only those days
       const isAllowed = await checkBlackoutBeforeSubmit(sorted);
       if (!isAllowed) {
@@ -1646,7 +1501,7 @@ async function loadEmployees() {
                 <td class="text-sm" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${u.email}</td>
                 <td>${u.department||'—'}</td>
                 <td class="font-mono text-sm">${u.hire_date||'—'}</td>
-                <td>${probationBadge}</td>
+                <td>${u.probation_status === 'active' ? `<div style="display:flex;gap:6px;align-items:center"><span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600">⏳ Active</span><button class="btn btn-ghost btn-xs" onclick="showProbationModal(${u.id}, '${u.name.replace(/'/g, "\\'")}', '${u.probation_status}', '${u.hire_date || ''}')">⚙️</button></div>` : `<span style="color:var(--text-s)">—</span>`}</td>
                 <td><div class="flex gap-2">
                   <button class="btn btn-ghost btn-sm" onclick="showEditEmployee(${JSON.stringify(u).replace(/"/g,'&quot;')})">Edit</button>
                   <button class="btn btn-ghost btn-sm" onclick="empTerminateSingle(${u.id}, '${u.name}')" style="color:var(--red)">🗑️</button>
@@ -1657,6 +1512,128 @@ async function loadEmployees() {
         </table>
       </div>
     </div>`;
+}
+
+// ── R4 Probation Management ────────────────────────────────────────────────────
+async function showProbationModal(empId, empName, probStatus, hireDate) {
+  if (state.user.role !== 'hr_admin') {
+    showToast('error', 'Only HR Admins can manage probation');
+    return;
+  }
+  
+  // Calculate days remaining if still on probation
+  let daysRemaining = '—';
+  if (probStatus === 'active' && hireDate) {
+    const hired = new Date(hireDate);
+    const probationEndDate = new Date(hired);
+    probationEndDate.setDate(probationEndDate.getDate() + 90);
+    const today = new Date();
+    const daysLeft = Math.ceil((probationEndDate - today) / (1000 * 60 * 60 * 24));
+    daysRemaining = daysLeft > 0 ? `${daysLeft} days` : 'Expired';
+  }
+  
+  const bodyHtml = `
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div>
+        <p style="margin:0;font-size:13px;color:var(--text-s);margin-bottom:4px">Employee</p>
+        <p style="margin:0;font-size:14px;font-weight:600">${empName}</p>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <p style="margin:0;font-size:13px;color:var(--text-s);margin-bottom:4px">Status</p>
+          <p style="margin:0;font-size:14px;font-weight:600">${probStatus === 'active' ? '⏳ On Probation' : probStatus === 'passed' ? '✅ Passed' : '❌ Failed'}</p>
+        </div>
+        <div>
+          <p style="margin:0;font-size:13px;color:var(--text-s);margin-bottom:4px">Days Remaining</p>
+          <p style="margin:0;font-size:14px;font-weight:600">${daysRemaining}</p>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:12px">
+        <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:var(--text)">Update Status</p>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm btn-success" onclick="updateProbationStatus(${empId}, 'passed', '${empName.replace(/'/g, "\\'")}')">✅ Mark as Passed</button>
+          <button class="btn btn-sm btn-danger" onclick="updateProbationStatus(${empId}, 'failed', '${empName.replace(/'/g, "\\'")}')">❌ Mark as Failed</button>
+        </div>
+      </div>
+      ${probStatus === 'active' ? `<div style="border-top:1px solid var(--border);padding-top:12px">
+        <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:var(--text)">Grant Exception</p>
+        <button class="btn btn-sm btn-secondary" onclick="showGrantLeaveExceptionModal(${empId}, '${empName.replace(/'/g, "\\'")}')">🎁 Grant Manual Leave</button>
+      </div>` : ''}
+    </div>`;
+  
+  showModal(`⏳ Probation Management`, bodyHtml, () => true, 'modal-md');
+}
+
+async function updateProbationStatus(empId, newStatus, empName) {
+  const confirm = window.confirm(`Are you sure you want to mark ${empName} as ${newStatus === 'passed' ? 'PASSED' : 'FAILED'} probation?`);
+  if (!confirm) return;
+  
+  const r = await api('POST', '/api/probation/update-status', { employee_id: empId, status: newStatus });
+  if (!r.ok) {
+    showToast('error', `Failed: ${r.data.error}`);
+    return;
+  }
+  showToast('success', `Probation status updated to ${newStatus}`);
+  // Close modal and reload employees
+  const modal = document.querySelector('.modal');
+  if (modal) modal.style.display = 'none';
+  await loadEmployees();
+}
+
+async function showGrantLeaveExceptionModal(empId, empName) {
+  const typesR = await api('GET', '/leave/types');
+  const types = typesR.data || [];
+  
+  const bodyHtml = `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <p style="margin:0;color:var(--text-s)">Grant ${empName} manual leave days as an exception during probation.</p>
+      <div class="form-group">
+        <label>Leave Type</label>
+        <select id="exc-leave-type" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:white">
+          <option value="">-- Select Leave Type --</option>
+          ${types.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Number of Days</label>
+        <input type="number" id="exc-days" min="0.5" step="0.5" placeholder="e.g., 1" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px"/>
+      </div>
+      <div class="form-group">
+        <label>Reason/Notes</label>
+        <textarea id="exc-reason" rows="2" placeholder="Why is this exception granted?" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px"></textarea>
+      </div>
+    </div>`;
+  
+  showModal('Grant Leave Exception', bodyHtml, async () => {
+    const ltId = document.getElementById('exc-leave-type').value;
+    const days = parseFloat(document.getElementById('exc-days').value);
+    const reason = document.getElementById('exc-reason').value.trim();
+    
+    if (!ltId) {
+      showToast('error', 'Please select a leave type');
+      return false;
+    }
+    if (!days || days <= 0) {
+      showToast('error', 'Please enter valid number of days');
+      return false;
+    }
+    
+    const r = await api('POST', '/api/probation/manual-leave', {
+      employee_id: empId,
+      leave_type_id: parseInt(ltId),
+      days,
+      reason
+    });
+    
+    if (!r.ok) {
+      showToast('error', `Failed: ${r.data.error}`);
+      return false;
+    }
+    
+    showToast('success', `Granted ${days} day(s) of leave to ${empName}`);
+    await loadEmployees();
+    return true;
+  }, 'modal-md');
 }
 
 // ── Employee Termination Helpers ──
@@ -3500,36 +3477,4 @@ async function checkBlackoutBeforeSubmit(dates) {
   if (!r.ok) { showToast('error', 'Blackout check failed'); return false; }
   if (r.data.is_blackout) { showToast('error', 'Leave blocked during: ' + (r.data.blocking_blackout?.reason || 'Blackout')); return false; }
   return true;
-}
-
-// ── R8: Manage Delegations ───────────────────────────────────────────────────
-async function renderDelegations() {
-  if (state.user.role !== 'manager' && state.user.role !== 'hr_admin') {
-    document.getElementById('page-content').innerHTML = `<div class="alert alert-error">⚠ You don't have permission to manage delegations</div>`;
-    return;
-  }
-  
-  const el = document.getElementById('page-content');
-  el.innerHTML = `
-    <div class="page-header">
-      <div><h1>🔄 Manage Delegations</h1><p>Create & manage leave approval delegations</p></div>
-    </div>
-    <div class="page-content">
-      <div class="card">
-        <div class="card-header"><h3>Delegations I've Made</h3></div>
-        <div id="my-delegations-content">
-          <div style="text-align:center;padding:40px;color:var(--grey-600)">Loading...</div>
-        </div>
-        <button class="btn btn-primary" onclick="openCreateDelegationModal()" style="margin-top:16px">+ Create New Delegation</button>
-      </div>
-      
-      <div class="card" style="margin-top:20px">
-        <div class="card-header"><h3>Delegations I Receive</h3><span class="text-sm text-muted">Leave approvals delegated to me</span></div>
-        <div id="received-delegations-content">
-          <div style="text-align:center;padding:40px;color:var(--grey-600)">Loading...</div>
-        </div>
-      </div>
-    </div>
-  `;
-  await loadDelegationsPage();
 }
