@@ -952,33 +952,6 @@ def pending_leaves():
                WHERE lr.status='pending' AND u.manager_id=%s ORDER BY lr.created_at""",(uid,))
     data=rows(c); conn.close(); return jsonify([dict(r) for r in data])
 
-@app.route('/api/leave/action',methods=['POST'])
-def leave_action():
-    err=require_login()
-    if err: return err
-    uid=session['user_id']; data=request.json; action=data['action']
-    conn=get_db(); c=conn.cursor()
-    c.execute("SELECT * FROM leave_requests WHERE id=%s",(data['request_id'],)); req=row(c)
-    if not req: conn.close(); return jsonify({'error':'Not found'}),404
-    before_status=req['status']
-    c.execute("UPDATE leave_requests SET status=%s,approved_by=%s,approved_at=%s,remarks=%s WHERE id=%s",
-              (action+'d',uid,now_local().isoformat(),data.get('remarks',''),data['request_id']))
-    if action=='approve':
-        c.execute("UPDATE leave_balances SET used_days=used_days+%s WHERE user_id=%s AND leave_type_id=%s AND year=%s",
-                  (req['days'],req['user_id'],req['leave_type_id'],req['start_date'][:4]))
-        leave_dates=json.loads(req['dates_json']) if req['dates_json'] else []
-        if not leave_dates:
-            s=datetime.strptime(req['start_date'],'%Y-%m-%d').date()
-            e=datetime.strptime(req['end_date'],'%Y-%m-%d').date(); d=s
-            while d<=e:
-                if d.weekday()<5: leave_dates.append(d.isoformat())
-                d+=timedelta(days=1)
-        for ds in leave_dates:
-            c.execute("INSERT INTO attendance (user_id,date,status) VALUES (%s,%s,'leave') ON CONFLICT(user_id,date) DO UPDATE SET status='leave'",(req['user_id'],ds))
-    log_audit(c, uid, 'leave_'+action, entity_type='leave_request', entity_id=data['request_id'],
-              before={'status':before_status},
-              after={'status':action+'d','remarks':data.get('remarks',''),'target_user_id':req['user_id'],'days':float(req['days'])})
-    conn.commit(); conn.close(); return jsonify({'ok':True})
 
 @app.route('/api/leave/action',methods=['POST'])
 def leave_action():
