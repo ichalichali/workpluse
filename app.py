@@ -368,13 +368,13 @@ def init_db():
 # Release 4 · Probation Rules
     try:
         # Add probation columns if they don't exist
-        cur.execute("""
+        c.execute("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS hire_date DATE,
             ADD COLUMN IF NOT EXISTS probation_status TEXT DEFAULT 'active',
             ADD COLUMN IF NOT EXISTS probation_months INTEGER DEFAULT 3;
         """)
-        cur.execute("""
+        c.execute("""
             INSERT INTO schema_migrations (release_id, notes)
             VALUES ('R4_probation_rules', 'Probation tracking and enforcement')
             ON CONFLICT DO NOTHING;
