@@ -535,6 +535,908 @@ def init_db():
         sys.stderr.flush()
     conn.commit(); conn.close()
 
+# R12 TRAINING MANAGEMENT - BACKEND CODE
+# Add this to app.py in the following order:
+# 1. Database migrations in init_db()
+# 2. API endpoints after existing endpoints
+# 3. Helper functions at end of file
+
+# ════════════════════════════════════════════════════════════════════════════
+# PART 1: DATABASE MIGRATIONS (Add to init_db() function)
+# ════════════════════════════════════════════════════════════════════════════
+
+# Release 12 · Training Management
+try:
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS trainings (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            issuer TEXT,
+            is_mandatory BOOLEAN DEFAULT FALSE,
+            category TEXT,
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            location TEXT,
+            target_type TEXT DEFAULT 'all',
+            target_department_id INTEGER,
+            target_role TEXT,
+            target_user_ids_json TEXT,
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_training_dates ON trainings(start_date, end_date);")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_training_mandatory ON trainings(is_mandatory);")
+    
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS training_enrollments (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            training_id INTEGER NOT NULL REFERENCES trainings(id),
+            enrolled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            status TEXT DEFAULT 'pending_approval',
+            manager_approved BOOLEAN DEFAULT FALSE,
+            manager_approved_by INTEGER REFERENCES users(id),
+            manager_approved_at TIMESTAMP WITH TIME ZONE,
+            rejection_reason TEXT,
+            UNIQUE(user_id, training_id)
+        );
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_enroll_user ON training_enrollments(user_id);")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_enroll_status ON training_enrollments(status);")
+    
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS training_certificates (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            training_id INTEGER NOT NULL REFERENCES trainings(id),
+            enrollment_id INTEGER REFERENCES training_enrollments(id),
+            certificate_number TEXT,
+            issued_date DATE NOT NULL,
+            expiry_date DATE NOT NULL,
+            issuer_name TEXT,
+            status TEXT DEFAULT 'pending_approval',
+            approved_by INTEGER REFERENCES users(id),
+            approved_at TIMESTAMP WITH TIME ZONE,
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE(user_id, certificate_number)
+        );
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_cert_user ON training_certificates(user_id);")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_cert_expiry ON training_certificates(expiry_date);")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_cert_status ON training_certificates(status);")
+    
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS training_reminders (
+            id SERIAL PRIMARY KEY,
+            certificate_id INTEGER NOT NULL REFERENCES training_certificates(id),
+            reminder_type TEXT,
+            sent_at TIMESTAMP WITH TIME ZONE,
+            sent_to_email TEXT,
+            sent_to_manager_email TEXT
+        );
+    """)
+    
+    c.execute("""
+        INSERT INTO schema_migrations (release_id, notes)
+        VALUES ('R12_training_management', 'Training Management & Professional Certification Tracking')
+        ON CONFLICT DO NOTHING;
+    """)
+    conn.commit()
+    print("[init_db] R12 Training Management applied")
+except Exception as e:
+    conn.rollback()
+    print(f"[init_db] R12 FAILED: {e}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# PART 2: API ENDPOINTS (Add after existing routes, before closing)
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── R12: Training Management ──────────────────────────────────────────────────
+
+@app.route('/api/training/create', methods=['POST'])
+def create_training():
+    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    data = request.get_json()
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO trainings (name, description, issuer, is_mandatory, category, start_date, end_date, location, target_type, target_department_id, target_role, target_user_ids_json, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            data.get('name'),
+            data.get('description'),
+            data.get('issuer'),
+            data.get('is_mandatory', False),
+            data.get('category'),
+            data.get('start_date'),
+            data.get('end_date'),
+            data.get('location'),
+            data.get('target_type', 'all'),
+            data.get('target_department_id'),
+            data.get('target_role'),
+            data.get('target_user_ids_json'),
+            state['user_id']
+        ))
+        training_id = c.fetchone()[0]
+        
+        # Audit log
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, before_json, after_json, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (state['user_id'], 'training_create', 'training', training_id, None, json.dumps(data), '', ''))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'id': training_id, 'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/training/list', methods=['GET'])
+def list_trainings():
+    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, name, description, issuer, is_mandatory, category, start_date, end_date, location, target_type, created_by, created_at
+        FROM trainings
+        ORDER BY start_date DESC
+    """)
+    rows = c.fetchall()
+    result = []
+    for row in rows:
+        result.append({
+            'id': row[0],
+            'name': row[1],
+            'description': row[2],
+            'issuer': row[3],
+            'is_mandatory': row[4],
+            'category': row[5],
+            'start_date': row[6].isoformat() if row[6] else None,
+            'end_date': row[7].isoformat() if row[7] else None,
+            'location': row[8],
+            'target_type': row[9],
+            'created_by': row[10],
+            'created_at': row[11].isoformat() if row[11] else None
+        })
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/training/<int:training_id>', methods=['GET'])
+def get_training(training_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, name, description, issuer, is_mandatory, category, start_date, end_date, location, target_type, target_department_id, target_role, target_user_ids_json, created_by
+        FROM trainings WHERE id = %s
+    """, (training_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row:
+        return {'error': 'Training not found'}, 404
+    
+    return jsonify({
+        'id': row[0],
+        'name': row[1],
+        'description': row[2],
+        'issuer': row[3],
+        'is_mandatory': row[4],
+        'category': row[5],
+        'start_date': row[6].isoformat() if row[6] else None,
+        'end_date': row[7].isoformat() if row[7] else None,
+        'location': row[8],
+        'target_type': row[9],
+        'target_department_id': row[10],
+        'target_role': row[11],
+        'target_user_ids_json': row[12],
+        'created_by': row[13]
+    })
+
+@app.route('/api/training/<int:training_id>', methods=['PUT'])
+def update_training(training_id):
+    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    data = request.get_json()
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            UPDATE trainings
+            SET name=%s, description=%s, issuer=%s, is_mandatory=%s, category=%s, start_date=%s, end_date=%s, location=%s, target_type=%s, target_department_id=%s, target_role=%s, target_user_ids_json=%s
+            WHERE id=%s
+        """, (
+            data.get('name'),
+            data.get('description'),
+            data.get('issuer'),
+            data.get('is_mandatory'),
+            data.get('category'),
+            data.get('start_date'),
+            data.get('end_date'),
+            data.get('location'),
+            data.get('target_type'),
+            data.get('target_department_id'),
+            data.get('target_role'),
+            data.get('target_user_ids_json'),
+            training_id
+        ))
+        
+        # Audit
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, after_json, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (state['user_id'], 'training_update', 'training', training_id, json.dumps(data), '', ''))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/training/<int:training_id>', methods=['DELETE'])
+def delete_training(training_id):
+    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("DELETE FROM trainings WHERE id=%s", (training_id,))
+        
+        # Audit
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (state['user_id'], 'training_delete', 'training', training_id, '', ''))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/training/available', methods=['GET'])
+def get_available_trainings():
+    """Get trainings available to logged-in user based on target_type"""
+    if not state.get('user'):
+        return {'error': 'Unauthorized'}, 401
+    
+    user_id = state['user_id']
+    user_role = state.get('role')
+    user_dept = state.get('user', {}).get('branch_id')
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    # Get trainings where target matches user
+    c.execute("""
+        SELECT id, name, description, issuer, is_mandatory, category, start_date, end_date, location
+        FROM trainings
+        WHERE (
+            target_type = 'all' OR
+            (target_type = 'role' AND target_role = %s) OR
+            (target_type = 'department' AND target_department_id = %s) OR
+            (target_type = 'user' AND target_user_ids_json::jsonb @> %s)
+        )
+        AND start_date >= CURRENT_DATE
+        ORDER BY start_date ASC
+    """, (user_role, user_dept, json.dumps([user_id])))
+    
+    rows = c.fetchall()
+    result = []
+    for row in rows:
+        result.append({
+            'id': row[0],
+            'name': row[1],
+            'description': row[2],
+            'issuer': row[3],
+            'is_mandatory': row[4],
+            'category': row[5],
+            'start_date': row[6].isoformat() if row[6] else None,
+            'end_date': row[7].isoformat() if row[7] else None,
+            'location': row[8]
+        })
+    conn.close()
+    return jsonify(result)
+
+# ── Training Enrollments ──────────────────────────────────────────────────────
+
+@app.route('/api/training/enroll', methods=['POST'])
+def enroll_training():
+    if not state.get('user'): return {'error': 'Unauthorized'}, 401
+    
+    data = request.get_json()
+    user_id = state['user_id']
+    training_id = data.get('training_id')
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Check if already enrolled
+        c.execute("""
+            SELECT id FROM training_enrollments
+            WHERE user_id=%s AND training_id=%s
+        """, (user_id, training_id))
+        
+        if c.fetchone():
+            conn.close()
+            return {'error': 'Already enrolled in this training'}, 400
+        
+        # Create enrollment
+        c.execute("""
+            INSERT INTO training_enrollments (user_id, training_id, status)
+            VALUES (%s, %s, 'pending_approval')
+            RETURNING id
+        """, (user_id, training_id))
+        
+        enroll_id = c.fetchone()[0]
+        
+        # Get training details for email
+        c.execute("SELECT name FROM trainings WHERE id=%s", (training_id,))
+        training_name = c.fetchone()[0]
+        
+        # Get user's manager
+        c.execute("""
+            SELECT id, email FROM users WHERE id = (SELECT manager_id FROM users WHERE id=%s)
+        """, (user_id,))
+        manager = c.fetchone()
+        
+        # Audit
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (user_id, 'training_enroll', 'enrollment', enroll_id, '', ''))
+        
+        conn.commit()
+        conn.close()
+        
+        # Send email to manager
+        if manager:
+            send_email(
+                manager[1],
+                'Training Enrollment Approval Required',
+                f'Employee {state["user"].get("name")} has enrolled in {training_name}. Please approve or reject.'
+            )
+        
+        return jsonify({'id': enroll_id, 'status': 'pending_approval', 'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/training/my-enrollments', methods=['GET'])
+def get_my_enrollments():
+    if not state.get('user'): return {'error': 'Unauthorized'}, 401
+    
+    user_id = state['user_id']
+    conn = get_db()
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT te.id, te.training_id, t.name, te.status, te.enrolled_at, te.manager_approved, t.start_date, t.end_date
+        FROM training_enrollments te
+        JOIN trainings t ON te.training_id = t.id
+        WHERE te.user_id = %s
+        ORDER BY t.start_date DESC
+    """, (user_id,))
+    
+    rows = c.fetchall()
+    result = []
+    for row in rows:
+        result.append({
+            'id': row[0],
+            'training_id': row[1],
+            'training_name': row[2],
+            'status': row[3],
+            'enrolled_at': row[4].isoformat() if row[4] else None,
+            'manager_approved': row[5],
+            'start_date': row[6].isoformat() if row[6] else None,
+            'end_date': row[7].isoformat() if row[7] else None
+        })
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/training/enrollments', methods=['GET'])
+def get_enrollments():
+    """Get pending/all enrollments - Manager/HR can see team/company"""
+    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    
+    status_filter = request.args.get('status', 'pending_approval')
+    conn = get_db()
+    c = conn.cursor()
+    
+    if state.get('role') == 'manager':
+        # Manager sees team enrollments
+        c.execute("""
+            SELECT te.id, te.user_id, u.name, te.training_id, t.name, te.status, te.enrolled_at
+            FROM training_enrollments te
+            JOIN trainings t ON te.training_id = t.id
+            JOIN users u ON te.user_id = u.id
+            WHERE u.manager_id = %s AND te.status = %s
+            ORDER BY te.enrolled_at DESC
+        """, (state['user_id'], status_filter))
+    else:
+        # HR sees all
+        c.execute("""
+            SELECT te.id, te.user_id, u.name, te.training_id, t.name, te.status, te.enrolled_at
+            FROM training_enrollments te
+            JOIN trainings t ON te.training_id = t.id
+            JOIN users u ON te.user_id = u.id
+            WHERE te.status = %s
+            ORDER BY te.enrolled_at DESC
+        """, (status_filter,))
+    
+    rows = c.fetchall()
+    result = []
+    for row in rows:
+        result.append({
+            'id': row[0],
+            'user_id': row[1],
+            'user_name': row[2],
+            'training_id': row[3],
+            'training_name': row[4],
+            'status': row[5],
+            'enrolled_at': row[6].isoformat() if row[6] else None
+        })
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/training/enroll/<int:enroll_id>/approve', methods=['POST'])
+def approve_enrollment(enroll_id):
+    """Manager/HR approves enrollment"""
+    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Get enrollment details
+        c.execute("""
+            SELECT user_id, training_id FROM training_enrollments WHERE id=%s
+        """, (enroll_id,))
+        enroll = c.fetchone()
+        if not enroll:
+            conn.close()
+            return {'error': 'Enrollment not found'}, 404
+        
+        user_id, training_id = enroll
+        
+        # Get training dates
+        c.execute("SELECT start_date, end_date, name FROM trainings WHERE id=%s", (training_id,))
+        train = c.fetchone()
+        start_date, end_date, training_name = train
+        
+        # Update enrollment
+        c.execute("""
+            UPDATE training_enrollments
+            SET status='approved', manager_approved=TRUE, manager_approved_by=%s, manager_approved_at=NOW()
+            WHERE id=%s
+        """, (state['user_id'], enroll_id))
+        
+        # Create attendance records for training dates
+        current = start_date
+        while current <= end_date:
+            c.execute("""
+                INSERT INTO attendance (user_id, date, status)
+                VALUES (%s, %s, 'training')
+                ON CONFLICT (user_id, date) DO UPDATE SET status='training'
+            """, (user_id, current.isoformat()))
+            current += timedelta(days=1)
+        
+        # Audit
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (state['user_id'], 'training_enroll_approve', 'enrollment', enroll_id, '', ''))
+        
+        conn.commit()
+        conn.close()
+        
+        # Send email to employee
+        c = get_db().cursor()
+        c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
+        employee_email = c.fetchone()[0]
+        send_email(employee_email, f'Training Enrollment Approved', f'Your enrollment in {training_name} has been approved.')
+        
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/training/enroll/<int:enroll_id>/reject', methods=['POST'])
+def reject_enrollment(enroll_id):
+    """Manager/HR rejects enrollment"""
+    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    
+    data = request.get_json()
+    reason = data.get('rejection_reason', '')
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Get enrollment details
+        c.execute("""
+            SELECT user_id, training_id FROM training_enrollments WHERE id=%s
+        """, (enroll_id,))
+        enroll = c.fetchone()
+        if not enroll:
+            conn.close()
+            return {'error': 'Enrollment not found'}, 404
+        
+        user_id, training_id = enroll
+        
+        # Update enrollment
+        c.execute("""
+            UPDATE training_enrollments
+            SET status='cancelled', rejection_reason=%s
+            WHERE id=%s
+        """, (reason, enroll_id))
+        
+        # Get training name
+        c.execute("SELECT name FROM trainings WHERE id=%s", (training_id,))
+        training_name = c.fetchone()[0]
+        
+        # Audit
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (state['user_id'], 'training_enroll_reject', 'enrollment', enroll_id, '', ''))
+        
+        conn.commit()
+        conn.close()
+        
+        # Send email to employee
+        c = get_db().cursor()
+        c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
+        employee_email = c.fetchone()[0]
+        send_email(employee_email, f'Training Enrollment Rejected', f'Your enrollment in {training_name} has been rejected.\nReason: {reason}')
+        
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+# ── Training Certificates ────────────────────────────────────────────────────
+
+@app.route('/api/training/certificate/submit', methods=['POST'])
+def submit_certificate():
+    """Employee submits certificate after training"""
+    if not state.get('user'): return {'error': 'Unauthorized'}, 401
+    
+    data = request.get_json()
+    user_id = state['user_id']
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO training_certificates (user_id, training_id, enrollment_id, certificate_number, issued_date, expiry_date, issuer_name, notes, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending_approval')
+            RETURNING id
+        """, (
+            user_id,
+            data.get('training_id'),
+            data.get('enrollment_id'),
+            data.get('certificate_number'),
+            data.get('issued_date'),
+            data.get('expiry_date'),
+            data.get('issuer_name'),
+            data.get('notes')
+        ))
+        
+        cert_id = c.fetchone()[0]
+        
+        # Get training name
+        c.execute("SELECT name FROM trainings WHERE id=%s", (data.get('training_id'),))
+        training_name = c.fetchone()[0]
+        
+        # Get user's manager
+        c.execute("SELECT id, email FROM users WHERE id=(SELECT manager_id FROM users WHERE id=%s)", (user_id,))
+        manager = c.fetchone()
+        
+        # Audit
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (user_id, 'training_cert_submit', 'certificate', cert_id, '', ''))
+        
+        conn.commit()
+        conn.close()
+        
+        # Send email to manager
+        if manager:
+            send_email(
+                manager[1],
+                'Training Certificate Submitted',
+                f'Employee {state["user"].get("name")} has submitted a certificate for {training_name}. Please review and approve.'
+            )
+        
+        return jsonify({'id': cert_id, 'status': 'pending_approval', 'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/training/my-certificates', methods=['GET'])
+def get_my_certificates():
+    if not state.get('user'): return {'error': 'Unauthorized'}, 401
+    
+    user_id = state['user_id']
+    conn = get_db()
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT tc.id, t.name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.issuer_name, tc.status, tc.created_at
+        FROM training_certificates tc
+        JOIN trainings t ON tc.training_id = t.id
+        WHERE tc.user_id = %s
+        ORDER BY tc.expiry_date ASC
+    """, (user_id,))
+    
+    rows = c.fetchall()
+    result = []
+    for row in rows:
+        days_to_expiry = (row[4] - date.today()).days if row[4] else None
+        result.append({
+            'id': row[0],
+            'training_name': row[1],
+            'certificate_number': row[2],
+            'issued_date': row[3].isoformat() if row[3] else None,
+            'expiry_date': row[4].isoformat() if row[4] else None,
+            'issuer_name': row[5],
+            'status': row[6],
+            'days_to_expiry': days_to_expiry,
+            'created_at': row[7].isoformat() if row[7] else None
+        })
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/training/certificates', methods=['GET'])
+def get_certificates():
+    """Manager/HR sees team/company certificates"""
+    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    if state.get('role') == 'manager':
+        # Manager sees team certs
+        c.execute("""
+            SELECT tc.id, tc.user_id, u.name, t.name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.status
+            FROM training_certificates tc
+            JOIN trainings t ON tc.training_id = t.id
+            JOIN users u ON tc.user_id = u.id
+            WHERE u.manager_id = %s
+            ORDER BY tc.expiry_date ASC
+        """, (state['user_id'],))
+    else:
+        # HR sees all
+        c.execute("""
+            SELECT tc.id, tc.user_id, u.name, t.name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.status
+            FROM training_certificates tc
+            JOIN trainings t ON tc.training_id = t.id
+            JOIN users u ON tc.user_id = u.id
+            ORDER BY tc.expiry_date ASC
+        """)
+    
+    rows = c.fetchall()
+    result = []
+    for row in rows:
+        days_to_expiry = (row[6] - date.today()).days if row[6] else None
+        result.append({
+            'id': row[0],
+            'user_id': row[1],
+            'user_name': row[2],
+            'training_name': row[3],
+            'certificate_number': row[4],
+            'issued_date': row[5].isoformat() if row[5] else None,
+            'expiry_date': row[6].isoformat() if row[6] else None,
+            'status': row[7],
+            'days_to_expiry': days_to_expiry
+        })
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/training/certificates/expiring', methods=['GET'])
+def get_expiring_certificates():
+    """HR Dashboard - certs expiring in X days"""
+    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    
+    days = request.args.get('days', 30, type=int)
+    conn = get_db()
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT tc.id, tc.user_id, u.email, u.name, t.name, tc.certificate_number, tc.expiry_date, um.email as manager_email
+        FROM training_certificates tc
+        JOIN trainings t ON tc.training_id = t.id
+        JOIN users u ON tc.user_id = u.id
+        LEFT JOIN users um ON u.manager_id = um.id
+        WHERE tc.status = 'approved' AND tc.expiry_date = CURRENT_DATE + %s AND tc.expiry_date > CURRENT_DATE
+        ORDER BY tc.expiry_date ASC
+    """, (days,))
+    
+    rows = c.fetchall()
+    result = []
+    for row in rows:
+        result.append({
+            'id': row[0],
+            'user_id': row[1],
+            'user_email': row[2],
+            'user_name': row[3],
+            'training_name': row[4],
+            'certificate_number': row[5],
+            'expiry_date': row[6].isoformat() if row[6] else None,
+            'manager_email': row[7]
+        })
+    conn.close()
+    return jsonify(result)
+
+@app.route('/api/training/certificate/<int:cert_id>/approve', methods=['POST'])
+def approve_certificate(cert_id):
+    """Manager/HR approves certificate"""
+    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Get cert details
+        c.execute("""
+            SELECT user_id, training_id, certificate_number, expiry_date FROM training_certificates WHERE id=%s
+        """, (cert_id,))
+        cert = c.fetchone()
+        if not cert:
+            conn.close()
+            return {'error': 'Certificate not found'}, 404
+        
+        user_id, training_id, cert_number, expiry_date = cert
+        
+        # Update certificate
+        c.execute("""
+            UPDATE training_certificates
+            SET status='approved', approved_by=%s, approved_at=NOW()
+            WHERE id=%s
+        """, (state['user_id'], cert_id))
+        
+        # Update R4b certificate fields
+        c.execute("""
+            UPDATE users
+            SET certificate_name=(SELECT name FROM trainings WHERE id=%s), certificate_expiration=%s
+            WHERE id=%s
+        """, (training_id, expiry_date, user_id))
+        
+        # Audit
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (state['user_id'], 'training_cert_approve', 'certificate', cert_id, '', ''))
+        
+        conn.commit()
+        conn.close()
+        
+        # Send email to employee
+        c = get_db().cursor()
+        c.execute("SELECT email, name FROM users WHERE id=%s", (user_id,))
+        emp = c.fetchone()
+        send_email(emp[0], 'Certificate Approved', f'Your certificate {cert_number} has been approved.')
+        
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/training/certificate/<int:cert_id>/reject', methods=['POST'])
+def reject_certificate(cert_id):
+    """Manager/HR rejects certificate"""
+    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    
+    data = request.get_json()
+    reason = data.get('rejection_reason', '')
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Get cert details
+        c.execute("""
+            SELECT user_id, certificate_number FROM training_certificates WHERE id=%s
+        """, (cert_id,))
+        cert = c.fetchone()
+        if not cert:
+            conn.close()
+            return {'error': 'Certificate not found'}, 404
+        
+        user_id, cert_number = cert
+        
+        # Update certificate - keep status as pending but record rejection reason in notes
+        c.execute("""
+            UPDATE training_certificates
+            SET notes=%s, status='pending_approval'
+            WHERE id=%s
+        """, (f'Rejected: {reason}', cert_id))
+        
+        # Audit
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (state['user_id'], 'training_cert_reject', 'certificate', cert_id, '', ''))
+        
+        conn.commit()
+        conn.close()
+        
+        # Send email to employee
+        c = get_db().cursor()
+        c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
+        emp_email = c.fetchone()[0]
+        send_email(emp_email, 'Certificate Rejection', f'Your certificate {cert_number} was rejected.\nReason: {reason}')
+        
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+# ── Training Dashboard (HR) ───────────────────────────────────────────────────
+
+@app.route('/api/training/dashboard', methods=['GET'])
+def get_training_dashboard():
+    """HR Dashboard - expiring certs, missing mandatory, compliance rate"""
+    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    # Expiring in 30 days
+    c.execute("""
+        SELECT COUNT(*) FROM training_certificates
+        WHERE status='approved' AND expiry_date = CURRENT_DATE + 30
+    """)
+    expiring_soon = c.fetchone()[0]
+    
+    # Expired
+    c.execute("""
+        SELECT COUNT(*) FROM training_certificates
+        WHERE status='approved' AND expiry_date < CURRENT_DATE
+    """)
+    expired = c.fetchone()[0]
+    
+    # Compliance rate
+    c.execute("""
+        SELECT COUNT(*) FROM users WHERE role='employee'
+    """)
+    total_employees = c.fetchone()[0]
+    
+    c.execute("""
+        SELECT COUNT(DISTINCT user_id) FROM training_certificates
+        WHERE status='approved' AND expiry_date >= CURRENT_DATE
+    """)
+    compliant = c.fetchone()[0]
+    
+    compliance_rate = (compliant / total_employees * 100) if total_employees > 0 else 0
+    
+    conn.close()
+    
+    return jsonify({
+        'expiring_soon': expiring_soon,
+        'expired': expired,
+        'total_employees': total_employees,
+        'compliant_employees': compliant,
+        'compliance_rate': round(compliance_rate, 1)
+    })
+
+# ────────────────────────────────────────────────────────────────────────────────
+# END R12 BACKEND CODE
+# ────────────────────────────────────────────────────────────────────────────────
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def get_setting(key, default=''):
     conn=get_db(); c=conn.cursor()
