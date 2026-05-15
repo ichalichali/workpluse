@@ -2255,49 +2255,7 @@ def setup_db():
         return jsonify({'ok': True, 'message': 'Database initialized successfully! You can now log in.'})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
-
-@app.route('/backup-db-r6-safety', methods=['GET'])
-def backup_db():
-    """Simple database backup"""
-    from datetime import datetime
-    import json
-    
-    try:
-        conn = get_db()
-        c = conn.cursor()
-        
-        # Get all tables
-        c.execute("""
-            SELECT table_name FROM information_schema.tables 
-            WHERE table_schema='public' AND table_type='BASE TABLE'
-            ORDER BY table_name
-        """)
-        tables = [row[0] for row in c.fetchall()]
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'backup_r6_{timestamp}.json'
-        
-        backup_data = {}
-        
-        for table in tables:
-            c.execute(f"SELECT * FROM {table}")
-            cols = [desc[0] for desc in c.description]
-            rows = c.fetchall()
-            
-            backup_data[table] = {
-                'columns': cols,
-                'rows': [dict(zip(cols, row)) for row in rows]
-            }
-        
-        conn.close()
-        
-        return json.dumps(backup_data, indent=2, default=str), 200, {
-            'Content-Disposition': f'attachment; filename="{filename}"',
-            'Content-Type': 'application/json'
-        }
-    except Exception as e:
-        return f"Error: {str(e)}", 500
-    
+ 
 @app.route('/clear-today-workpulse-2026', methods=['GET','POST'])
 def clear_today():
     """Clear ALL attendance records for today — use after timezone fix."""
