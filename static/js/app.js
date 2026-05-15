@@ -3694,7 +3694,7 @@ async function renderTrainingManagement() {
 
 async function loadTrainingList() {
     try {
-        const r = await api('GET', '/api/training/list');
+        const r = await api('GET', '/training/list');
         const trainings = r.data || [];
         
         const html = trainings.length === 0 
@@ -3840,7 +3840,7 @@ async function showCreateTrainingModal() {
         }
         
         try {
-            await api('POST', '/api/training/create', {
+            await api('POST', '/training/create', {
                 name,
                 description: document.getElementById('train-desc').value,
                 start_date: startDate,
@@ -3964,7 +3964,7 @@ async function showEditTrainingModal(training) {
     
     showModal('Edit Training Program', html, async () => {
         try {
-            await api('PUT', `/api/training/${training.id}`, {
+            await api('PUT', `/training/${training.id}`, {
                 name: document.getElementById('train-name').value,
                 description: document.getElementById('train-desc').value,
                 start_date: document.getElementById('train-start').value,
@@ -3985,7 +3985,7 @@ async function deleteTraining(trainingId, trainingName) {
     if (!confirm(`Delete "${trainingName}"? This cannot be undone.`)) return;
     
     try {
-        await api('DELETE', `/api/training/${trainingId}`);
+        await api('DELETE', `/training/${trainingId}`);
         showToast('success', 'Training deleted');
         await loadTrainingList();
     } catch (err) {
@@ -4011,7 +4011,7 @@ async function renderTrainingCatalog() {
 
 async function loadCatalogTrainings() {
     try {
-        const r = await api('GET', '/api/training/available');
+        const r = await api('GET', '/training/available');
         const trainings = r.data || [];
         
         if (trainings.length === 0) {
@@ -4056,7 +4056,7 @@ async function loadCatalogTrainings() {
 
 async function enrollTraining(trainingId, trainingName) {
     try {
-        const r = await api('POST', '/api/training/enroll', { training_id: trainingId });
+        const r = await api('POST', '/training/enroll', { training_id: trainingId });
         showToast('success', `Enrolled in ${trainingName}! Awaiting manager approval...`);
         await loadCatalogTrainings();
     } catch (err) {
@@ -4107,9 +4107,9 @@ async function loadCertificatesList(status) {
         
         let r;
         if (status === 'expired') {
-            r = await api('GET', '/api/training/certificates/expiring?days=0');
+            r = await api('GET', '/training/certificates/expiring?days=0');
         } else {
-            r = await api('GET', '/api/training/certificates');
+            r = await api('GET', '/training/certificates');
         }
         
         const certs = r.data || [];
@@ -4186,7 +4186,7 @@ function filterCertStatus(status) {
 
 async function approveCertificate(certId, certNumber) {
     try {
-        await api('POST', `/api/training/certificate/${certId}/approve`);
+        await api('POST', `/training/certificate/${certId}/approve`);
         showToast('success', `Certificate ${certNumber} approved`);
         await loadCertificatesList('pending');
     } catch (err) {
@@ -4199,7 +4199,7 @@ async function rejectCertificate(certId, certNumber) {
     if (!reason) return;
     
     try {
-        await api('POST', `/api/training/certificate/${certId}/reject`, { rejection_reason: reason });
+        await api('POST', `/training/certificate/${certId}/reject`, { rejection_reason: reason });
         showToast('success', `Certificate ${certNumber} rejected`);
         await loadCertificatesList('pending');
     } catch (err) {
