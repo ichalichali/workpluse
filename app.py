@@ -2258,8 +2258,9 @@ def setup_db():
 
 @app.route('/backup-db-r6-safety', methods=['GET'])
 def backup_db():
-    """Emergency backup before R6 deployment - Python version (no pg_dump needed)"""
+    """Simple database backup"""
     from datetime import datetime
+    import json
     
     try:
         conn = get_db()
@@ -2274,42 +2275,29 @@ def backup_db():
         tables = [row[0] for row in c.fetchall()]
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'backup_r6_{timestamp}.sql'
+        filename = f'backup_r6_{timestamp}.json'
         
-        # Build SQL dump
-        dump = "-- OnTime Database Backup\n"
-        dump += f"-- Generated: {datetime.now().isoformat()}\n\n"
+        backup_data = {}
         
         for table in tables:
-            # Get CREATE TABLE statement
-            c.execute(f"SELECT pg_get_ddl('{table}'::regclass)")
-            ddl = c.fetchone()
-            if ddl:
-                dump += ddl[0] + ";\n\n"
-            
-            # Get data
             c.execute(f"SELECT * FROM {table}")
-            rows = c.fetchall()
             cols = [desc[0] for desc in c.description]
+            rows = c.fetchall()
             
-            for row in rows:
-                vals = ', '.join([
-                    f"'{v}'" if isinstance(v, str) else 'NULL' if v is None else str(v)
-                    for v in row
-                ])
-                dump += f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({vals});\n"
-            
-            dump += "\n"
+            backup_data[table] = {
+                'columns': cols,
+                'rows': [dict(zip(cols, row)) for row in rows]
+            }
         
         conn.close()
         
-        return dump, 200, {
+        return json.dumps(backup_data, indent=2, default=str), 200, {
             'Content-Disposition': f'attachment; filename="{filename}"',
-            'Content-Type': 'text/plain'
+            'Content-Type': 'application/json'
         }
     except Exception as e:
-        return f"<h1>Error: {e}</h1><pre>{str(e)}</pre>", 500
-
+        return f"Error: {str(e)}", 500
+    
 @app.route('/clear-today-workpulse-2026', methods=['GET','POST'])
 def clear_today():
     """Clear ALL attendance records for today — use after timezone fix."""
