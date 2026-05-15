@@ -1233,7 +1233,7 @@ async function showApplyModal() {
     
     <div class="form-group">
       <label>Leave Duration</label>
-      <div style="display:flex;gap:24px;margin-top:8px">
+      <div style="display:flex;gap:24px;margin-top:8px;justify-content:center">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="radio" name="leave-duration" value="full" checked onchange="updateLeaveDuration('full')" style="cursor:pointer"/>
           Full Day
@@ -1247,7 +1247,7 @@ async function showApplyModal() {
     
     <div class="form-group" id="session-selector" style="display:none">
       <label>Select Session</label>
-      <div style="display:flex;gap:24px;margin-top:8px">
+      <div style="display:flex;gap:24px;margin-top:8px;flex-direction:column;align-items:center">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="radio" name="leave-session" value="morning" id="session-morning" style="cursor:pointer"/>
           <span id="morning-label">Morning (${officeHours.morning_start} - ${officeHours.morning_end})</span>
