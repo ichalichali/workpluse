@@ -12,6 +12,15 @@ const handEmojiState = {
   quoteExpireTime: null,
 };
 
+// ── R6 · Half-Day Leave Settings ──────────────────────────────────────────────
+let officeHours = {
+  morning_start: '08:00',
+  morning_end: '12:00',
+  afternoon_start: '12:00',
+  afternoon_end: '17:00'
+};
+let selectedLeaveSession = null;  // 'morning', 'afternoon', or null (full day)
+
 // ── Initialize from localStorage ──────────────────────────────────────────────
 function initializeSession() {
   const saved = localStorage.getItem('ontime_user');
@@ -37,6 +46,19 @@ async function api(method, path, body) {
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
+}
+
+// ── R6 · Load Office Hours for Half-Day Leave ────────────────────────────────
+async function loadOfficeHours() {
+  const r = await api('GET', '/office-hours');
+  if (r.ok && r.data) {
+    officeHours = {
+      morning_start: r.data.office_hours_morning_start || '08:00',
+      morning_end: r.data.office_hours_morning_end || '12:00',
+      afternoon_start: r.data.office_hours_afternoon_start || '12:00',
+      afternoon_end: r.data.office_hours_afternoon_end || '17:00'
+    };
+  }
 }
 
 // ── R3 · Helper Functions (must be before renderDashboard) ───────────────────
@@ -1098,7 +1120,7 @@ async function loadLeaveData() {
                 ${reqs.length ? reqs.map(r => `<tr>
                   <td><strong>${r.leave_name}</strong><div style="font-size:12px;color:var(--text-s)">${r.reason||''}</div></td>
                   <td class="text-sm">${formatLeaveDates(r)}</td>
-                  <td>${r.days}d</td>
+                  <td>${r.days}d${r.session && r.session !== 'full' ? ` <span style="background:#e0e7ff;color:#3730a3;padding:2px 6px;border-radius:3px;font-size:11px;margin-left:6px">📅 ${r.session}</span>` : ''}</td>
                   <td>${badgeHtml(r.status)}</td>
                   <td style="font-size:12px;color:var(--text-s)">${r.remarks||'—'}</td>
                 </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state"><div class="icon">📭</div><p>No leave requests yet</p></div></td></tr>'}
@@ -1111,6 +1133,9 @@ async function loadLeaveData() {
 }
 
 async function showApplyModal() {
+  // R6: Load office hours for half-day leave
+  await loadOfficeHours();
+  
   const typesR = await api('GET', '/leave/types');
   const balR   = await api('GET', '/leave/balance');
   const attR   = await api('GET', '/leave/my-requests');
@@ -1205,6 +1230,35 @@ async function showApplyModal() {
         ${types.map(t => `<option value="${t.id}">${t.name} (${balMap[t.id]||0} days remaining)</option>`).join('')}
       </select>
     </div>
+    
+    <div class="form-group">
+      <label>Leave Duration</label>
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+          <input type="radio" name="leave-duration" value="full" checked onchange="updateLeaveDuration('full')" style="cursor:pointer"/>
+          Full Day
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+          <input type="radio" name="leave-duration" value="half" onchange="updateLeaveDuration('half')" style="cursor:pointer"/>
+          Half Day
+        </label>
+      </div>
+    </div>
+    
+    <div class="form-group" id="session-selector" style="display:none">
+      <label>Select Session</label>
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+          <input type="radio" name="leave-session" value="morning" id="session-morning" style="cursor:pointer"/>
+          <span id="morning-label">Morning (${officeHours.morning_start} - ${officeHours.morning_end})</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+          <input type="radio" name="leave-session" value="afternoon" id="session-afternoon" style="cursor:pointer"/>
+          <span id="afternoon-label">Afternoon (${officeHours.afternoon_start} - ${officeHours.afternoon_end})</span>
+        </label>
+      </div>
+    </div>
+    
     <div class="lc-wrap">
       <div class="lc-header">
         <button class="lc-nav" id="lc-prev">&#8249;</button>
@@ -1222,28 +1276,63 @@ async function showApplyModal() {
         <span><span class="lc-dot lc-dot-weekend"></span> Weekend</span>
       </div>
     </div>
-    <div class="alert alert-info" id="days-calc" style="margin-top:12px">Click dates to select your leave days (weekends auto-skipped)</div>
+    <div class="alert alert-info" id="days-calc" style="margin-top:12px">Click dates to select your leave days (weekends auto-skipped)
+      <span id="half-day-info" style="display:none">
+        <br/><strong>Half-day = 0.5 day deduction</strong>
+      </span>
+    </div>
     <button type="button" class="btn btn-secondary" onclick="openCutiBersamaModal()" style="margin-bottom:12px">🇮🇩 View Cuti Bersama Dates</button>
     <div class="form-group" style="margin-top:12px"><label>Reason</label><textarea id="lt-reason" rows="2" placeholder="Brief description of your leave reason…"></textarea></div>`,
     async () => {
-      const ltId   = document.getElementById('lt-select').value;
+      const duration = getSelectedLeaveDuration();
+      const ltId = document.getElementById('lt-select').value;
       const reason = document.getElementById('lt-reason').value;
-      const sorted = [...selectedDates].sort();
-      if (sorted.length === 0) { document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">Please select at least one leave day</div>`; return false; }
+      
+      let dates = [];
+      if (duration === 'half') {
+        dates = [...selectedDates].sort();
+        if (dates.length !== 1) {
+          document.getElementById('apply-alert').innerHTML = `<div class="alert alert-error">Half-day leave requires selecting exactly 1 date</div>`;
+          return false;
+        }
+        const session = document.querySelector('input[name="leave-session"]:checked')?.value;
+        if (!session) {
+          document.getElementById('apply-alert').innerHTML = `<div class="alert alert-error">Please select morning or afternoon</div>`;
+          return false;
+        }
+        selectedLeaveSession = session;
+      } else {
+        dates = [...selectedDates].sort();
+        if (dates.length === 0) {
+          document.getElementById('apply-alert').innerHTML = `<div class="alert alert-error">Please select at least one leave day</div>`;
+          return false;
+        }
+        selectedLeaveSession = null;
+      }
       
       // R4: Check Probation Status
       if (state.user.probation_status === 'active') {
-        document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">⚠ Leave not allowed during probation period. Please contact HR to request an exception.</div>`;
+        document.getElementById('apply-alert').innerHTML = `<div class="alert alert-error">⚠ Leave not allowed during probation period. Please contact HR to request an exception.</div>`;
         return false;
       }
       
-      // Send the exact selected dates so backend counts only those days
-      const isAllowed = await checkBlackoutBeforeSubmit(sorted);
+      // R5: Check Blackout Dates
+      const isAllowed = await checkBlackoutBeforeSubmit(dates);
       if (!isAllowed) {
         return false;
       }
-      const r = await api('POST', '/leave/apply', { leave_type_id: parseInt(ltId), dates: sorted, reason });
-      if (!r.ok) { document.getElementById('apply-alert').innerHTML=`<div class="alert alert-error">⚠ ${r.data.error}</div>`; return false; }
+      
+      // R6: Submit with session
+      const r = await api('POST', '/leave/apply', { 
+        leave_type_id: parseInt(ltId), 
+        dates: dates, 
+        reason: reason,
+        session: selectedLeaveSession || 'full'
+      });
+      if (!r.ok) { 
+        document.getElementById('apply-alert').innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`; 
+        return false; 
+      }
       await loadLeaveData();
       return true;
     }, 'modal-lg');
@@ -2136,7 +2225,34 @@ async function renderSettings() {
           </div>
         </div>
       </div>
-    </div>`;
+    </div>
+    
+    <div class="card mb-4" style="margin-top:16px">
+      <div class="card-header"><h3>⏰ R6: Office Hours (Half-Day Leave)</h3></div>
+      <div class="card-body">
+        <p class="text-sm text-muted" style="margin-bottom:16px">Configure morning and afternoon sessions for half-day leave requests.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+          <div>
+            <label>Morning Start</label>
+            <input type="time" id="morning-start" value="${officeHours.morning_start}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px"/>
+          </div>
+          <div>
+            <label>Morning End</label>
+            <input type="time" id="morning-end" value="${officeHours.morning_end}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px"/>
+          </div>
+          <div>
+            <label>Afternoon Start</label>
+            <input type="time" id="afternoon-start" value="${officeHours.afternoon_start}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px"/>
+          </div>
+          <div>
+            <label>Afternoon End</label>
+            <input type="time" id="afternoon-end" value="${officeHours.afternoon_end}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px"/>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveOfficeHours()">💾 Save Office Hours</button>
+      </div>
+    </div>
+    `;
   
   // R3: Initialize slider UI after rendering
   setTimeout(updateSliderUI, 0);
@@ -3462,6 +3578,55 @@ function renderCutiCalendar() {
   }
   updateCutiSel();
 }
+
+// ── R6 · Half-Day Leave Helper Functions ──────────────────────────────────────
+
+function updateLeaveDuration(duration) {
+  const sessionSelector = document.getElementById('session-selector');
+  const halfDayInfo = document.getElementById('half-day-info');
+  
+  if (duration === 'half') {
+    sessionSelector.style.display = 'block';
+    halfDayInfo.style.display = 'inline';
+    selectedLeaveSession = 'morning';
+    document.getElementById('session-morning').checked = true;
+  } else {
+    sessionSelector.style.display = 'none';
+    halfDayInfo.style.display = 'none';
+    selectedLeaveSession = null;
+  }
+}
+
+function getSelectedLeaveDuration() {
+  return document.querySelector('input[name="leave-duration"]:checked')?.value || 'full';
+}
+
+function updateSessionLabels() {
+  document.getElementById('morning-label').textContent = 
+    `Morning (${officeHours.morning_start} - ${officeHours.morning_end})`;
+  document.getElementById('afternoon-label').textContent = 
+    `Afternoon (${officeHours.afternoon_start} - ${officeHours.afternoon_end})`;
+}
+
+async function saveOfficeHours() {
+  const data = {
+    morning_start: document.getElementById('morning-start').value,
+    morning_end: document.getElementById('morning-end').value,
+    afternoon_start: document.getElementById('afternoon-start').value,
+    afternoon_end: document.getElementById('afternoon-end').value
+  };
+  
+  const r = await api('POST', '/office-hours/save', data);
+  if (r.ok) {
+    showToast('success', '✅ Office hours updated');
+    await loadOfficeHours();
+    updateSessionLabels();
+  } else {
+    showToast('error', '❌ Failed to save office hours');
+  }
+}
+
+// ── End R6 Helpers ───────────────────────────────────────────────────────────
 
 async function updateCutiSel() {
   const sorted = [...cutiState.selectedDates].sort();
