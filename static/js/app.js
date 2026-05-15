@@ -3643,3 +3643,626 @@ async function checkBlackoutBeforeSubmit(dates) {
   if (r.data.is_blackout) { showToast('error', 'Leave blocked during: ' + (r.data.blocking_blackout?.reason || 'Blackout')); return false; }
   return true;
 }
+
+// R12 TRAINING MANAGEMENT - PHASE 2 FRONTEND
+// Add these functions to app.js
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAGE: Training Management (HR Admin) - Line ~368, add to loadPage switch
+// ════════════════════════════════════════════════════════════════════════════
+
+case 'training-management':
+    return renderTrainingManagement();
+case 'training-catalog':
+    return renderTrainingCatalog();
+case 'training-approvals':
+    return renderTrainingApprovals();
+
+// ════════════════════════════════════════════════════════════════════════════
+// SIDEBAR NAV BUTTON - Add to sidebar under MANAGEMENT (after Settings)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Find this in sidebar around line 310:
+// <a href="#" onclick="showPage('settings')" class="nav-item">
+//   <span class="nav-icon">⚙️</span> Settings
+// </a>
+
+// ADD AFTER IT:
+// <a href="#" onclick="showPage('training-management')" class="nav-item">
+//   <span class="nav-icon">🎓</span> Training & Certs
+// </a>
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAGE 1: HR TRAINING MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════════
+
+async function renderTrainingManagement() {
+    if (state.user.role !== 'hr_admin') {
+        showToast('error', 'HR Admin access only');
+        navigate('dashboard');
+        return;
+    }
+    
+    const el = document.getElementById('page-content');
+    el.innerHTML = `
+        <div class="page-header flex justify-between items-center">
+            <div><h1>🎓 Training & Certifications</h1><p>Manage employee training programs</p></div>
+            <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
+        </div>
+        <div id="training-list">Loading…</div>
+    `;
+    
+    await loadTrainingList();
+}
+
+async function loadTrainingList() {
+    try {
+        const r = await api('GET', '/api/training/list');
+        const trainings = r.data || [];
+        
+        const html = trainings.length === 0 
+            ? '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings yet. Create one to get started!</div>'
+            : `
+                <div class="card">
+                    <div class="card-header"><h3>All Training Programs</h3><span class="text-sm text-muted">${trainings.length} total</span></div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr>
+                                <th>Training Name</th>
+                                <th>Issuer</th>
+                                <th>Dates</th>
+                                <th style="text-align:center">Mandatory</th>
+                                <th>Status</th>
+                                <th></th>
+                            </tr></thead>
+                            <tbody>
+                                ${trainings.map(t => {
+                                    const today = new Date().toISOString().split('T')[0];
+                                    let status = '⚪ Past';
+                                    let statusColor = 'var(--text-s)';
+                                    
+                                    if (t.start_date > today) {
+                                        status = '⏳ Upcoming';
+                                        statusColor = '#f59e0b';
+                                    } else if (t.start_date <= today && t.end_date >= today) {
+                                        status = '🔴 Active Now';
+                                        statusColor = '#ef4444';
+                                    }
+                                    
+                                    return `
+                                        <tr>
+                                            <td><strong>${t.name}</strong><br><span style="font-size:12px;color:var(--text-s)">${t.description || '—'}</span></td>
+                                            <td>${t.issuer || '—'}</td>
+                                            <td class="text-sm font-mono">${t.start_date} → ${t.end_date}</td>
+                                            <td style="text-align:center">${t.is_mandatory ? '✅ Yes' : '—'}</td>
+                                            <td><span style="color:${statusColor};font-weight:600">${status}</span></td>
+                                            <td>
+                                                <div class="flex gap-2">
+                                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
+                                                    <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >🗑️</button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        
+        document.getElementById('training-list').innerHTML = html;
+    } catch (err) {
+        console.error('Error loading trainings:', err);
+        showToast('error', 'Failed to load trainings');
+    }
+}
+
+async function showCreateTrainingModal() {
+    const today = new Date().toISOString().split('T')[0];
+    const html = `
+        <div style="display:flex;flex-direction:column;gap:16px">
+            <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Training Name *</label>
+                <input type="text" id="train-name" placeholder="e.g., OJK Securities Dealer License" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+            </div>
+            
+            <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Description</label>
+                <textarea id="train-desc" placeholder="Brief description of the training" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;resize:vertical;min-height:60px"></textarea>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                    <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Start Date *</label>
+                    <input type="date" id="train-start" value="${today}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">End Date *</label>
+                    <input type="date" id="train-end" value="${today}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+                </div>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                    <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Issuer</label>
+                    <input type="text" id="train-issuer" placeholder="e.g., OJK, TICMI" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Category</label>
+                    <input type="text" id="train-category" placeholder="e.g., Compliance, Skills" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+                </div>
+            </div>
+            
+            <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Location</label>
+                <input type="text" id="train-location" placeholder="e.g., Jakarta Office, Online" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+            </div>
+            
+            <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Target Audience *</label>
+                <select id="train-target" onchange="updateTrainTargetUI()" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px">
+                    <option value="all">All Employees</option>
+                    <option value="department">Specific Department</option>
+                    <option value="role">Specific Role</option>
+                    <option value="user">Specific Employees</option>
+                </select>
+            </div>
+            
+            <div id="train-target-ui"></div>
+            
+            <div style="display:flex;align-items:center;gap:12px;padding:12px;background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:8px">
+                <input type="checkbox" id="train-mandatory" style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer" />
+                <label for="train-mandatory" style="font-size:14px;cursor:pointer;margin:0"><strong>Mandatory Training</strong> - Employees must complete this training</label>
+            </div>
+        </div>
+    `;
+    
+    showModal('Create Training Program', html, async () => {
+        const name = document.getElementById('train-name').value.trim();
+        const startDate = document.getElementById('train-start').value;
+        const endDate = document.getElementById('train-end').value;
+        
+        if (!name || !startDate || !endDate) {
+            showToast('error', 'Fill in required fields');
+            return;
+        }
+        
+        const targetType = document.getElementById('train-target').value;
+        let targetDeptId = null;
+        let targetRole = null;
+        let targetUserIds = null;
+        
+        if (targetType === 'department') {
+            targetDeptId = document.getElementById('train-dept-sel').value;
+        } else if (targetType === 'role') {
+            targetRole = document.getElementById('train-role-sel').value;
+        } else if (targetType === 'user') {
+            const selected = document.querySelectorAll('input.train-user-cb:checked');
+            targetUserIds = JSON.stringify(Array.from(selected).map(cb => parseInt(cb.value)));
+        }
+        
+        try {
+            await api('POST', '/api/training/create', {
+                name,
+                description: document.getElementById('train-desc').value,
+                start_date: startDate,
+                end_date: endDate,
+                issuer: document.getElementById('train-issuer').value,
+                category: document.getElementById('train-category').value,
+                location: document.getElementById('train-location').value,
+                target_type: targetType,
+                target_department_id: targetDeptId,
+                target_role: targetRole,
+                target_user_ids_json: targetUserIds,
+                is_mandatory: document.getElementById('train-mandatory').checked
+            });
+            
+            showToast('success', `"${name}" training created!`);
+            await loadTrainingList();
+        } catch (err) {
+            showToast('error', 'Failed to create training');
+        }
+    });
+    
+    updateTrainTargetUI();
+}
+
+function updateTrainTargetUI() {
+    const targetType = document.getElementById('train-target').value;
+    const uiEl = document.getElementById('train-target-ui');
+    
+    if (targetType === 'all') {
+        uiEl.innerHTML = '';
+    } else if (targetType === 'department') {
+        uiEl.innerHTML = `
+            <div>
+                <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Select Department</label>
+                <select id="train-dept-sel" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px">
+                    <option value="">Choose department…</option>
+                    <option value="1">Engineering</option>
+                    <option value="2">Trading</option>
+                    <option value="3">Compliance</option>
+                    <option value="4">Operations</option>
+                </select>
+            </div>
+        `;
+    } else if (targetType === 'role') {
+        uiEl.innerHTML = `
+            <div>
+                <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Select Role</label>
+                <select id="train-role-sel" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px">
+                    <option value="">Choose role…</option>
+                    <option value="employee">Employee</option>
+                    <option value="manager">Manager</option>
+                    <option value="hr_admin">HR Admin</option>
+                </select>
+            </div>
+        `;
+    } else if (targetType === 'user') {
+        uiEl.innerHTML = `
+            <div>
+                <label style="font-size:13px;font-weight:600;display:block;margin-bottom:6px">Select Employees</label>
+                <div id="train-user-list" style="max-height:200px;overflow-y:auto;border:1.5px solid #e2e8f0;border-radius:8px;padding:12px"></div>
+            </div>
+        `;
+        loadTrainingUserSelector();
+    }
+}
+
+async function loadTrainingUserSelector() {
+    try {
+        const r = await api('GET', '/users');
+        const users = r.data || [];
+        
+        const html = users.map(u => `
+            <label style="display:flex;align-items:center;gap:8px;padding:8px;cursor:pointer;border-radius:6px;hover:background:#f1f5f9">
+                <input type="checkbox" class="train-user-cb" value="${u.id}" style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer" />
+                <span style="flex:1">${u.name}</span>
+                <span style="font-size:12px;color:var(--text-s)">${u.email}</span>
+            </label>
+        `).join('');
+        
+        document.getElementById('train-user-list').innerHTML = html || '<div style="color:var(--text-s)">No employees found</div>';
+    } catch (err) {
+        console.error('Error loading users:', err);
+    }
+}
+
+async function showEditTrainingModal(training) {
+    const html = `
+        <div style="display:flex;flex-direction:column;gap:16px">
+            <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Training Name</label>
+                <input type="text" id="train-name" value="${training.name}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+            </div>
+            
+            <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Description</label>
+                <textarea id="train-desc" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;resize:vertical;min-height:60px">${training.description || ''}</textarea>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                    <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Start Date</label>
+                    <input type="date" id="train-start" value="${training.start_date}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">End Date</label>
+                    <input type="date" id="train-end" value="${training.end_date}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+                </div>
+            </div>
+            
+            <div>
+                <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Issuer</label>
+                <input type="text" id="train-issuer" value="${training.issuer || ''}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px" />
+            </div>
+            
+            <div style="display:flex;align-items:center;gap:12px;padding:12px;background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:8px">
+                <input type="checkbox" id="train-mandatory" ${training.is_mandatory ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer" />
+                <label for="train-mandatory" style="font-size:14px;cursor:pointer;margin:0"><strong>Mandatory Training</strong></label>
+            </div>
+        </div>
+    `;
+    
+    showModal('Edit Training Program', html, async () => {
+        try {
+            await api('PUT', `/api/training/${training.id}`, {
+                name: document.getElementById('train-name').value,
+                description: document.getElementById('train-desc').value,
+                start_date: document.getElementById('train-start').value,
+                end_date: document.getElementById('train-end').value,
+                issuer: document.getElementById('train-issuer').value,
+                is_mandatory: document.getElementById('train-mandatory').checked
+            });
+            
+            showToast('success', 'Training updated');
+            await loadTrainingList();
+        } catch (err) {
+            showToast('error', 'Failed to update training');
+        }
+    });
+}
+
+async function deleteTraining(trainingId, trainingName) {
+    if (!confirm(`Delete "${trainingName}"? This cannot be undone.`)) return;
+    
+    try {
+        await api('DELETE', `/api/training/${trainingId}`);
+        showToast('success', 'Training deleted');
+        await loadTrainingList();
+    } catch (err) {
+        showToast('error', 'Failed to delete training');
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAGE 2: EMPLOYEE TRAINING CATALOG
+// ════════════════════════════════════════════════════════════════════════════
+
+async function renderTrainingCatalog() {
+    const el = document.getElementById('page-content');
+    el.innerHTML = `
+        <div class="page-header">
+            <div><h1>🎓 Available Training Programs</h1><p>Enroll in training to develop your skills</p></div>
+        </div>
+        <div id="catalog-list">Loading…</div>
+    `;
+    
+    await loadCatalogTrainings();
+}
+
+async function loadCatalogTrainings() {
+    try {
+        const r = await api('GET', '/api/training/available');
+        const trainings = r.data || [];
+        
+        if (trainings.length === 0) {
+            document.getElementById('catalog-list').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings available at the moment.</div>';
+            return;
+        }
+        
+        const html = `
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:16px">
+                ${trainings.map(t => `
+                    <div class="card" style="display:flex;flex-direction:column">
+                        <div style="padding:20px;border-bottom:1px solid #e2e8f0;flex:1">
+                            <div style="display:flex;align-items:start;justify-content:space-between;margin-bottom:12px">
+                                <h3 style="margin:0;font-size:16px;font-weight:700">${t.name}</h3>
+                                ${t.is_mandatory ? '<span style="background:#fee2e2;color:#991b1b;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600">📌 Mandatory</span>' : ''}
+                            </div>
+                            
+                            <p style="margin:0 0 12px 0;font-size:13px;color:var(--text-s);line-height:1.4">${t.description || 'No description provided'}</p>
+                            
+                            <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+                                ${t.issuer ? `<div><strong>Issuer:</strong> ${t.issuer}</div>` : ''}
+                                ${t.category ? `<div><strong>Category:</strong> ${t.category}</div>` : ''}
+                                <div><strong>Dates:</strong> ${t.start_date} to ${t.end_date}</div>
+                                ${t.location ? `<div><strong>Location:</strong> ${t.location}</div>` : ''}
+                            </div>
+                        </div>
+                        
+                        <div style="padding:16px">
+                            <button class="btn btn-primary" style="width:100%" onclick="enrollTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >Enroll Now →</button>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        
+        document.getElementById('catalog-list').innerHTML = html;
+    } catch (err) {
+        console.error('Error loading catalog:', err);
+        showToast('error', 'Failed to load trainings');
+    }
+}
+
+async function enrollTraining(trainingId, trainingName) {
+    try {
+        const r = await api('POST', '/api/training/enroll', { training_id: trainingId });
+        showToast('success', `Enrolled in ${trainingName}! Awaiting manager approval...`);
+        await loadCatalogTrainings();
+    } catch (err) {
+        if (err.response?.status === 400) {
+            showToast('error', 'Already enrolled in this training');
+        } else {
+            showToast('error', 'Failed to enroll in training');
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAGE 3: CERTIFICATE APPROVAL (Manager/HR)
+// ════════════════════════════════════════════════════════════════════════════
+
+async function renderTrainingApprovals() {
+    if (state.user.role === 'employee') {
+        showToast('error', 'Manager/HR access only');
+        navigate('dashboard');
+        return;
+    }
+    
+    const el = document.getElementById('page-content');
+    el.innerHTML = `
+        <div class="page-header">
+            <div><h1>📋 Certificate Approvals</h1><p>Review and approve training certificates</p></div>
+        </div>
+        
+        <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="filterCertStatus('pending')" id="filter-pending">⏳ Pending</button>
+            <button class="btn btn-secondary" onclick="filterCertStatus('approved')" id="filter-approved">✅ Approved</button>
+            <button class="btn btn-secondary" onclick="filterCertStatus('expired')" id="filter-expired">⚠️ Expired</button>
+        </div>
+        
+        <div id="approval-list">Loading…</div>
+    `;
+    
+    await loadCertificatesList('pending');
+}
+
+async function loadCertificatesList(status) {
+    try {
+        // Update active button
+        document.querySelectorAll('[id^="filter-"]').forEach(b => b.classList.remove('btn-primary'));
+        document.querySelectorAll('[id^="filter-"]').forEach(b => b.classList.add('btn-secondary'));
+        document.getElementById(`filter-${status}`).classList.add('btn-primary');
+        document.getElementById(`filter-${status}`).classList.remove('btn-secondary');
+        
+        let r;
+        if (status === 'expired') {
+            r = await api('GET', '/api/training/certificates/expiring?days=0');
+        } else {
+            r = await api('GET', '/api/training/certificates');
+        }
+        
+        const certs = r.data || [];
+        const filtered = status === 'pending' 
+            ? certs.filter(c => c.status === 'pending_approval')
+            : status === 'approved'
+            ? certs.filter(c => c.status === 'approved')
+            : certs.filter(c => c.days_to_expiry < 0);
+        
+        if (filtered.length === 0) {
+            document.getElementById('approval-list').innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-s)">No ${status} certificates</div>`;
+            return;
+        }
+        
+        const html = `
+            <div class="card">
+                <div class="card-header"><h3>Certificate Requests</h3><span class="text-sm text-muted">${filtered.length} ${status}</span></div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr>
+                            <th>Employee</th>
+                            <th>Training</th>
+                            <th>Certificate #</th>
+                            <th>Issued Date</th>
+                            <th>Expiry Date</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr></thead>
+                        <tbody>
+                            ${filtered.map(c => {
+                                let statusBadge = '<span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600">⏳ Pending</span>';
+                                if (c.status === 'approved') {
+                                    statusBadge = '<span style="background:#dcfce7;color:#166534;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600">✅ Approved</span>';
+                                } else if (c.days_to_expiry < 0) {
+                                    statusBadge = '<span style="background:#fee2e2;color:#991b1b;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:600">⚠️ Expired</span>';
+                                }
+                                
+                                return `
+                                    <tr>
+                                        <td><strong>${c.user_name}</strong></td>
+                                        <td>${c.training_name}</td>
+                                        <td class="font-mono text-sm">${c.certificate_number}</td>
+                                        <td class="font-mono text-sm">${c.issued_date}</td>
+                                        <td class="font-mono text-sm">${c.expiry_date}</td>
+                                        <td>${statusBadge}</td>
+                                        <td>
+                                            <div class="flex gap-2">
+                                                ${c.status === 'pending_approval' ? `
+                                                    <button class="btn btn-ghost btn-sm" style="color:var(--blue)" onclick="approveCertificate(${c.id}, '${c.certificate_number}')">Approve</button>
+                                                    <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="rejectCertificate(${c.id}, '${c.certificate_number}')">Reject</button>
+                                                ` : ''}
+                                                <button class="btn btn-ghost btn-sm" onclick="viewCertDetails(${JSON.stringify(c).replace(/"/g,'&quot;')})">View</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+        
+        document.getElementById('approval-list').innerHTML = html;
+    } catch (err) {
+        console.error('Error loading certificates:', err);
+        showToast('error', 'Failed to load certificates');
+    }
+}
+
+function filterCertStatus(status) {
+    loadCertificatesList(status);
+}
+
+async function approveCertificate(certId, certNumber) {
+    try {
+        await api('POST', `/api/training/certificate/${certId}/approve`);
+        showToast('success', `Certificate ${certNumber} approved`);
+        await loadCertificatesList('pending');
+    } catch (err) {
+        showToast('error', 'Failed to approve certificate');
+    }
+}
+
+async function rejectCertificate(certId, certNumber) {
+    const reason = prompt('Reason for rejection:');
+    if (!reason) return;
+    
+    try {
+        await api('POST', `/api/training/certificate/${certId}/reject`, { rejection_reason: reason });
+        showToast('success', `Certificate ${certNumber} rejected`);
+        await loadCertificatesList('pending');
+    } catch (err) {
+        showToast('error', 'Failed to reject certificate');
+    }
+}
+
+function viewCertDetails(cert) {
+    const html = `
+        <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                    <strong style="display:block;font-size:12px;color:var(--text-s);margin-bottom:4px">Employee</strong>
+                    <div>${cert.user_name}</div>
+                </div>
+                <div>
+                    <strong style="display:block;font-size:12px;color:var(--text-s);margin-bottom:4px">Training</strong>
+                    <div>${cert.training_name}</div>
+                </div>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                    <strong style="display:block;font-size:12px;color:var(--text-s);margin-bottom:4px">Certificate Number</strong>
+                    <div class="font-mono">${cert.certificate_number}</div>
+                </div>
+                <div>
+                    <strong style="display:block;font-size:12px;color:var(--text-s);margin-bottom:4px">Issuer</strong>
+                    <div>${cert.issuer_name || '—'}</div>
+                </div>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                    <strong style="display:block;font-size:12px;color:var(--text-s);margin-bottom:4px">Issued Date</strong>
+                    <div class="font-mono">${cert.issued_date}</div>
+                </div>
+                <div>
+                    <strong style="display:block;font-size:12px;color:var(--text-s);margin-bottom:4px">Expiry Date</strong>
+                    <div class="font-mono">${cert.expiry_date}</div>
+                </div>
+            </div>
+            
+            <div>
+                <strong style="display:block;font-size:12px;color:var(--text-s);margin-bottom:4px">Status</strong>
+                <div>${cert.status}</div>
+            </div>
+            
+            ${cert.notes ? `
+                <div>
+                    <strong style="display:block;font-size:12px;color:var(--text-s);margin-bottom:4px">Notes</strong>
+                    <div style="padding:12px;background:#f1f5f9;border-radius:6px;font-size:13px">${cert.notes}</div>
+                </div>
+            ` : ''}
+        </div>
+    `;
+    
+    showModal('Certificate Details', html);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// END R12 PHASE 2 FRONTEND
+// ════════════════════════════════════════════════════════════════════════════
