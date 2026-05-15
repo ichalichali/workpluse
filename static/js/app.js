@@ -1247,12 +1247,12 @@ async function showApplyModal() {
     
     <div class="form-group" id="session-selector" style="display:none">
       <label>Select Session</label>
-      <div style="display:flex;gap:24px;margin-top:8px;flex-direction:column;align-items:center">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <div style="display:flex;gap:32px;margin-top:8px;justify-content:center;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap">
           <input type="radio" name="leave-session" value="morning" id="session-morning" style="cursor:pointer"/>
           <span id="morning-label">Morning (${officeHours.morning_start} - ${officeHours.morning_end})</span>
         </label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap">
           <input type="radio" name="leave-session" value="afternoon" id="session-afternoon" style="cursor:pointer"/>
           <span id="afternoon-label">Afternoon (${officeHours.afternoon_start} - ${officeHours.afternoon_end})</span>
         </label>
