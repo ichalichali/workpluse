@@ -123,6 +123,9 @@ def init_db():
             department TEXT,
             branch_id INTEGER,
             manager_id INTEGER,
+            hire_date DATE,
+            probation_status TEXT DEFAULT 'active',  -- 'active', 'passed', 'failed'
+            probation_months INTEGER DEFAULT 3,       -- default 90 days
             shift_start TEXT DEFAULT '09:00',
             shift_end   TEXT DEFAULT '18:00',
             reset_token TEXT, reset_expires TEXT,
@@ -362,6 +365,26 @@ def init_db():
                               (uid,d.isoformat(),f"{ph:02d}:{pm:02d}:00",f"{random.randint(17,19):02d}:{random.randint(0,59):02d}:00",st))
                 except: pass
 
+# Release 4 · Probation Rules
+    try:
+        # Add probation columns if they don't exist
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS hire_date DATE,
+            ADD COLUMN IF NOT EXISTS probation_status TEXT DEFAULT 'active',
+            ADD COLUMN IF NOT EXISTS probation_months INTEGER DEFAULT 3;
+        """)
+        cur.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R4_probation_rules', 'Probation tracking and enforcement')
+            ON CONFLICT DO NOTHING;
+        """)
+        conn.commit()
+        print("[init_db] R4 Probation Rules applied")
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] R4 FAILED: {e}")
+        
 # Release 5 · Blackout Dates
     try:
         c.execute("""
@@ -537,6 +560,52 @@ def check_geofence(branch_id,lat,lon):
     if not branch or branch['latitude'] is None: return True,0,'No location set'
     dist=int(haversine(lat,lon,branch['latitude'],branch['longitude']))
     return dist<=branch['radius_m'],dist,branch['name']
+
+# ── R4: Probation Rules Helper ────────────────────────────────────────────────
+def check_and_transition_probation():
+    """Auto-transition employees from active probation to passed (90 days from hire_date)"""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        today = today_local()
+        
+        # Find all active probation employees whose probation period has ended (90 days = 3 months)
+        cur.execute("""
+            SELECT id, first_name, last_name, hire_date, probation_months
+            FROM users
+            WHERE probation_status = 'active' 
+            AND hire_date IS NOT NULL
+            AND hire_date + INTERVAL '1 day' * (probation_months * 30)::INTEGER <= %s
+        """, (today,))
+        
+        rows = cur.fetchall()
+        for row in rows:
+            emp_id, fname, lname, hire_date, prob_months = row['id'], row['first_name'], row['last_name'], row['hire_date'], row['probation_months']
+            
+            # Update status to 'passed'
+            cur.execute("UPDATE users SET probation_status = 'passed' WHERE id = %s", (emp_id,))
+            
+            # Log to audit trail
+            cur.execute("""
+                INSERT INTO audit_log (user_id, action, entity_type, entity_id, before_json, after_json)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                emp_id,
+                'probation_auto_transition',
+                'user',
+                emp_id,
+                '{"probation_status": "active"}',
+                '{"probation_status": "passed"}'
+            ))
+            
+            sys.stderr.write(f"[R4] Auto-transitioned {fname} {lname} from probation (hired {hire_date})\n")
+            sys.stderr.flush()
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        sys.stderr.write(f"[R4] Probation transition check failed: {e}\n")
+        sys.stderr.flush()
 
 def send_email(to_addr,subject,html_body):
     """Send email using Resend API (no SMTP issues on Railway)."""
@@ -909,6 +978,16 @@ def apply_leave():
             conn_bd.close()
             return jsonify({'error': f"Cannot apply leave during blackout: {blocking['reason']}. Contact HR for override.", 'is_blackout': True}), 400
     conn_bd.close()
+    
+# R4: Check Probation Status
+    conn_prob = get_db(); c_prob = conn_prob.cursor()
+    c_prob.execute("SELECT probation_status FROM users WHERE id = %s", (uid,))
+    prob_row = c_prob.fetchone()
+    conn_prob.close()
+    
+    if prob_row and prob_row['probation_status'] == 'active':
+        return jsonify({'error': 'Leave not allowed during probation period. Please contact HR to request an exception.', 'probation_status': 'active'}), 403
+    
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM leave_balances WHERE user_id=%s AND leave_type_id=%s AND year=%s",
               (uid,data['leave_type_id'],int(start_date[:4]))); bal=row(c)
@@ -1008,7 +1087,186 @@ def leave_action():
               after={'status':action+'d','remarks':data.get('remarks',''),'target_user_id':req['user_id'],'days':float(req['days'])})
     conn.commit(); conn.close(); return jsonify({'ok':True})
 
-# ── Users ─────────────────────────────────────────────────────────────────────
+# ── R4: Probation Management ──────────────────────────────────────────────────
+
+@app.route('/api/probation/employee/<int:emp_id>', methods=['GET'])
+def get_probation_status(emp_id):
+    """Get probation status for an employee (HR only)"""
+    err=require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    conn = get_db(); c = conn.cursor()
+    c.execute("""
+        SELECT id, name, hire_date, probation_status, probation_months
+        FROM users WHERE id = %s
+    """, (emp_id,))
+    row_data = c.fetchone()
+    conn.close()
+    
+    if not row_data:
+        return jsonify({'error': 'Employee not found'}), 404
+    
+    hire_date = row_data['hire_date']
+    prob_months = row_data['probation_months']
+    
+    if hire_date:
+        probation_end = hire_date + timedelta(days=prob_months * 30)
+        days_remaining = (probation_end - today_local()).days
+    else:
+        days_remaining = None
+    
+    return jsonify({
+        'id': row_data['id'],
+        'name': row_data['name'],
+        'hire_date': hire_date.isoformat() if hire_date else None,
+        'probation_status': row_data['probation_status'],
+        'probation_months': row_data['probation_months'],
+        'days_remaining': days_remaining,
+        'probation_end_date': (hire_date + timedelta(days=prob_months*30)).isoformat() if hire_date else None
+    })
+
+@app.route('/api/probation/list', methods=['GET'])
+def get_probation_list():
+    """List all employees currently on probation (HR only)"""
+    err=require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    conn = get_db(); c = conn.cursor()
+    c.execute("""
+        SELECT id, name, hire_date, probation_status, probation_months
+        FROM users
+        WHERE probation_status IN ('active', 'failed')
+        ORDER BY hire_date DESC
+    """)
+    rows_data = c.fetchall()
+    conn.close()
+    
+    today = today_local()
+    result = []
+    for row_data in rows_data:
+        hire_date = row_data['hire_date']
+        prob_months = row_data['probation_months']
+        
+        if hire_date:
+            probation_end = hire_date + timedelta(days=prob_months * 30)
+            days_remaining = (probation_end - today).days
+        else:
+            days_remaining = None
+        
+        result.append({
+            'id': row_data['id'],
+            'name': row_data['name'],
+            'hire_date': hire_date.isoformat() if hire_date else None,
+            'status': row_data['probation_status'],
+            'days_remaining': days_remaining
+        })
+    
+    return jsonify(result)
+
+@app.route('/api/probation/update-status', methods=['POST'])
+def update_probation_status():
+    """HR Admin: Manually update probation status (passed/failed)"""
+    err=require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    data = request.get_json()
+    emp_id = data.get('emp_id')
+    new_status = data.get('status')  # 'passed' or 'failed'
+    
+    if new_status not in ['passed', 'failed']:
+        return jsonify({'error': 'Invalid status. Must be passed or failed'}), 400
+    
+    conn = get_db(); c = conn.cursor()
+    
+    # Get old status for audit
+    c.execute("SELECT probation_status FROM users WHERE id = %s", (emp_id,))
+    old_row = c.fetchone()
+    old_status = old_row['probation_status'] if old_row else 'unknown'
+    
+    # Update status
+    c.execute("""
+        UPDATE users
+        SET probation_status = %s
+        WHERE id = %s
+    """, (new_status, emp_id))
+    
+    # Log to audit
+    c.execute("""
+        INSERT INTO audit_log (user_id, action, entity_type, entity_id, before_json, after_json)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (
+        session['user_id'],
+        'probation_status_updated',
+        'user',
+        emp_id,
+        json.dumps({'probation_status': old_status}),
+        json.dumps({'probation_status': new_status})
+    ))
+    
+    conn.commit(); conn.close()
+    
+    return jsonify({'ok': True, 'message': f'Employee probation status set to {new_status}'})
+
+@app.route('/api/probation/manual-leave', methods=['POST'])
+def add_manual_leave_probation():
+    """HR Admin: Manually add leave for probation employee (exception)"""
+    err=require_login()
+    if err: return err
+    if session['role'] != 'hr_admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    data = request.get_json()
+    emp_id = data.get('emp_id')
+    leave_type_id = data.get('leave_type_id')
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+    days = data.get('days')
+    reason = data.get('reason', 'HR override during probation')
+    
+    conn = get_db(); c = conn.cursor()
+    
+    # Create leave request (auto-approved by HR)
+    c.execute("""
+        INSERT INTO leave_requests 
+        (user_id, leave_type_id, start_date, end_date, days, status, approved_by, approved_at, reason)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+        RETURNING id
+    """, (emp_id, leave_type_id, start_date, end_date, days, 'approved', session['user_id'], reason))
+    
+    leave_id = c.fetchone()['id']
+    
+    # Update leave balance
+    c.execute("""
+        UPDATE leave_balances
+        SET used_days = used_days + %s
+        WHERE user_id = %s AND leave_type_id = %s
+        AND EXTRACT(YEAR FROM NOW())::INTEGER = year
+    """, (days, emp_id, leave_type_id))
+    
+    # Log to audit
+    c.execute("""
+        INSERT INTO audit_log (user_id, action, entity_type, entity_id, before_json, after_json)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (
+        session['user_id'],
+        'leave_probation_override',
+        'leave_request',
+        leave_id,
+        json.dumps({'source': 'hr_manual_probation'}),
+        json.dumps({'leave_id': leave_id, 'emp_id': emp_id})
+    ))
+    
+    conn.commit(); conn.close()
+    
+    return jsonify({'ok': True, 'leave_id': leave_id, 'message': 'Leave added for probation employee'})
+
+
 @app.route('/api/users')
 def list_users():
     err=require_login()
@@ -2158,6 +2416,14 @@ try:
     print("✅ Database ready")
 except Exception as e:
     print(f"⚠️  DB init error: {e}")
+
+
+# ── R4: Auto-transition probation on startup ──────────────────────────────────
+try:
+    check_and_transition_probation()
+except Exception as e:
+    sys.stderr.write(f"[startup] Probation transition check failed: {e}\n")
+    sys.stderr.flush()
 
 if __name__=='__main__':
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT',5000)))
