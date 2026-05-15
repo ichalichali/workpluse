@@ -431,6 +431,36 @@ def init_db():
         sys.stderr.write(f"[init_db] R7 FAILED: {e}\n")
         sys.stderr.flush()
 
+# Release 8 · Approval Delegation
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS approval_delegations (
+                id SERIAL PRIMARY KEY,
+                delegator_id INTEGER NOT NULL REFERENCES users(id),
+                delegate_id INTEGER NOT NULL REFERENCES users(id),
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                revoked_at TIMESTAMP WITH TIME ZONE
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_delegation_active ON approval_delegations(is_active, start_date, end_date)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_delegation_delegate ON approval_delegations(delegate_id, is_active)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_delegation_delegator ON approval_delegations(delegator_id)")
+        c.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R8_approval_delegation', 'Approval Delegation - Managers delegate leave approvals temporarily')
+            ON CONFLICT DO NOTHING
+        """)
+        conn.commit()
+        sys.stderr.write("[init_db] R8 Approval Delegation applied\n")
+        sys.stderr.flush()
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R8 FAILED: {e}\n")
+        sys.stderr.flush()
+
 # Release 9 · Cuti Bersama 2026
     try:
         c.execute("""
@@ -930,6 +960,61 @@ def leave_action():
     conn=get_db(); c=conn.cursor()
     c.execute("SELECT * FROM leave_requests WHERE id=%s",(data['request_id'],)); req=row(c)
     if not req: conn.close(); return jsonify({'error':'Not found'}),404
+    before_status=req['status']
+    c.execute("UPDATE leave_requests SET status=%s,approved_by=%s,approved_at=%s,remarks=%s WHERE id=%s",
+              (action+'d',uid,now_local().isoformat(),data.get('remarks',''),data['request_id']))
+    if action=='approve':
+        c.execute("UPDATE leave_balances SET used_days=used_days+%s WHERE user_id=%s AND leave_type_id=%s AND year=%s",
+                  (req['days'],req['user_id'],req['leave_type_id'],req['start_date'][:4]))
+        leave_dates=json.loads(req['dates_json']) if req['dates_json'] else []
+        if not leave_dates:
+            s=datetime.strptime(req['start_date'],'%Y-%m-%d').date()
+            e=datetime.strptime(req['end_date'],'%Y-%m-%d').date(); d=s
+            while d<=e:
+                if d.weekday()<5: leave_dates.append(d.isoformat())
+                d+=timedelta(days=1)
+        for ds in leave_dates:
+            c.execute("INSERT INTO attendance (user_id,date,status) VALUES (%s,%s,'leave') ON CONFLICT(user_id,date) DO UPDATE SET status='leave'",(req['user_id'],ds))
+    log_audit(c, uid, 'leave_'+action, entity_type='leave_request', entity_id=data['request_id'],
+              before={'status':before_status},
+              after={'status':action+'d','remarks':data.get('remarks',''),'target_user_id':req['user_id'],'days':float(req['days'])})
+    conn.commit(); conn.close(); return jsonify({'ok':True})
+
+@app.route('/api/leave/action',methods=['POST'])
+def leave_action():
+    err=require_login()
+    if err: return err
+    uid=session['user_id']; role=session['role']; data=request.json; action=data['action']
+    conn=get_db(); c=conn.cursor()
+    c.execute("SELECT * FROM leave_requests WHERE id=%s",(data['request_id'],)); req=row(c)
+    if not req: conn.close(); return jsonify({'error':'Not found'}),404
+    
+    # ── R8: Check delegation ──────────────────────────────────────────────
+    # Get the employee's manager
+    c.execute("SELECT manager_id FROM users WHERE id=%s", (req['user_id'],))
+    user_rec = c.fetchone()
+    original_manager = user_rec['manager_id'] if user_rec else None
+    
+    # Check if current user is a delegated approver
+    is_delegated_approver = False
+    if uid != original_manager and role == 'manager':
+        today = today_local().isoformat()
+        c.execute("""SELECT * FROM approval_delegations 
+                     WHERE delegate_id=%s AND delegator_id=%s 
+                     AND is_active=TRUE AND start_date <= %s AND end_date >= %s""",
+                  (uid, original_manager, today, today))
+        if c.fetchone():
+            is_delegated_approver = True
+    
+    # Permission check: only original manager or delegated approver or HR can approve
+    if role == 'manager' and uid != original_manager and not is_delegated_approver:
+        conn.close()
+        return jsonify({'error': 'Forbidden - not your team'}), 403
+    elif role == 'employee':
+        conn.close()
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    # ── Rest of original approval logic ───────────────────────────────────
     before_status=req['status']
     c.execute("UPDATE leave_requests SET status=%s,approved_by=%s,approved_at=%s,remarks=%s WHERE id=%s",
               (action+'d',uid,now_local().isoformat(),data.get('remarks',''),data['request_id']))
@@ -1768,6 +1853,155 @@ def upload_correction_attachment():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
+# ── R8: Approval Delegation API ──────────────────────────────────────────────
+@app.route('/api/approval-delegations/create', methods=['POST'])
+def create_delegation():
+    """Manager/HR creates a delegation."""
+    err = require_login()
+    if err: return err
+    
+    if session['role'] not in ['manager', 'hr_admin']:
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    data = request.json
+    delegate_id = data.get('delegate_id')
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+    
+    # Validate
+    if not delegate_id or not start_date or not end_date:
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    # Validate date range
+    try:
+        s = datetime.strptime(start_date, '%Y-%m-%d').date()
+        e = datetime.strptime(end_date, '%Y-%m-%d').date()
+        if s > e:
+            return jsonify({'error': 'Start date must be before end date'}), 400
+    except:
+        return jsonify({'error': 'Invalid date format'}), 400
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        # Check if delegate exists
+        c.execute("SELECT id FROM users WHERE id=%s", (delegate_id,))
+        if not c.fetchone():
+            conn.close()
+            return jsonify({'error': 'Delegate not found'}), 404
+        
+        # Revoke any existing active delegation from this delegator (one-to-one rule)
+        c.execute("""UPDATE approval_delegations 
+                     SET is_active=FALSE, revoked_at=%s
+                     WHERE delegator_id=%s AND is_active=TRUE""",
+                  (now_local().isoformat(), session['user_id']))
+        
+        # Create new delegation
+        c.execute("""
+            INSERT INTO approval_delegations (delegator_id, delegate_id, start_date, end_date, is_active)
+            VALUES (%s, %s, %s, %s, TRUE)
+        """, (session['user_id'], delegate_id, start_date, end_date))
+        
+        log_audit(c, session['user_id'], 'delegation_created', entity_type='approval_delegations',
+                  after={'delegate_id': delegate_id, 'start_date': start_date, 'end_date': end_date})
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'ok': True, 'message': f'Delegation created until {end_date}'})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/approval-delegations/my-delegations', methods=['GET'])
+def get_my_delegations():
+    """Manager/HR views delegations they've made (to revoke if needed)."""
+    err = require_login()
+    if err: return err
+    
+    uid = session['user_id']
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""SELECT ad.*, u.name as delegate_name 
+                 FROM approval_delegations ad
+                 JOIN users u ON ad.delegate_id = u.id
+                 WHERE ad.delegator_id=%s
+                 ORDER BY ad.created_at DESC""", (uid,))
+    rows = c.fetchall()
+    conn.close()
+    
+    result = [dict(r) for r in rows]
+    return jsonify(result)
+
+@app.route('/api/approval-delegations/active', methods=['GET'])
+def get_active_delegations():
+    """Get active delegations for current user (as delegate)."""
+    err = require_login()
+    if err: return err
+    
+    uid = session['user_id']
+    today = today_local().isoformat()
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""SELECT ad.*, u.name as delegator_name, u.email as delegator_email
+                 FROM approval_delegations ad
+                 JOIN users u ON ad.delegator_id = u.id
+                 WHERE ad.delegate_id=%s AND ad.is_active=TRUE AND ad.start_date <= %s AND ad.end_date >= %s
+                 ORDER BY ad.start_date ASC""", (uid, today, today))
+    rows = c.fetchall()
+    conn.close()
+    
+    result = [dict(r) for r in rows]
+    return jsonify(result)
+
+@app.route('/api/approval-delegations/revoke', methods=['POST'])
+def revoke_delegation():
+    """Manager/HR revokes a delegation."""
+    err = require_login()
+    if err: return err
+    
+    if session['role'] not in ['manager', 'hr_admin']:
+        return jsonify({'error': 'Forbidden'}), 403
+    
+    data = request.json
+    delegation_id = data.get('id')
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        c.execute("SELECT delegator_id FROM approval_delegations WHERE id=%s", (delegation_id,))
+        delegation = c.fetchone()
+        
+        if not delegation:
+            conn.close()
+            return jsonify({'error': 'Delegation not found'}), 404
+        
+        # Only delegator can revoke
+        if delegation['delegator_id'] != session['user_id']:
+            conn.close()
+            return jsonify({'error': 'Forbidden'}), 403
+        
+        c.execute("""UPDATE approval_delegations 
+                     SET is_active=FALSE, revoked_at=%s
+                     WHERE id=%s""",
+                  (now_local().isoformat(), delegation_id))
+        
+        log_audit(c, session['user_id'], 'delegation_revoked', entity_type='approval_delegations', entity_id=delegation_id)
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'ok': True, 'message': 'Delegation revoked'})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': str(e)}), 400
+    
 # ── R9: Cuti Bersama API ────────────────────────────────────────────────────
 @app.route('/api/cuti-bersama/list', methods=['GET'])
 def get_cuti_bersama():
