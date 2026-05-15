@@ -277,6 +277,9 @@ function renderShell() {
           <span class="nav-icon">✅</span> Leave Approvals
           ${state.pendingCount > 0 ? `<span class="nav-badge">${state.pendingCount}</span>` : ''}
         </button>
+        <button class="nav-item ${state.page==='delegations'?'active':''}" onclick="navigate('delegations')">
+          <span class="nav-icon">🔄</span> Manage Delegations
+        </button>
       </div>` : ''}
       ${isHR ? `
       <div class="sidebar-section">
@@ -349,6 +352,7 @@ async function loadPage() {
     case 'reports':     return renderReports();
     case 'audit':       return renderAudit();
     case 'blackout-dates': return renderBlackoutDates();
+    case 'delegations':     return renderDelegations();
     case 'pdp':         return renderPDP();
     case 'deletion-requests': {
       if (!pdpState.deletionRequests.length) {
@@ -1033,6 +1037,163 @@ async function submitCorrectionRequest(date, origIn, origOut, origStatus) {
     updateSelectAll();
   } else {
     showToast(res.data.error || 'Failed to submit correction', 'error');
+  }
+}
+
+// ── R8: Manage Delegations ────────────────────────────────────────────────────
+async function loadDelegationsPage() {
+  const [myDelR, recvDelR, usersR] = await Promise.all([
+    api('GET', '/approval-delegations/my-delegations'),
+    api('GET', '/approval-delegations/active'),
+    api('GET', '/users')
+  ]);
+  
+  const myDels = myDelR.data || [];
+  const recvDels = recvDelR.data || [];
+  const users = usersR.data || [];
+  
+  // Render "Delegations I've Made"
+  const myDelsHtml = myDels.length ? `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Delegated To</th><th>Start Date</th><th>End Date</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody>
+          ${myDels.map(d => `
+            <tr>
+              <td><strong>${d.delegate_name || 'Unknown'}</strong></td>
+              <td class="font-mono">${d.start_date}</td>
+              <td class="font-mono">${d.end_date}</td>
+              <td>${d.is_active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-grey">Revoked</span>'}</td>
+              <td>
+                ${d.is_active ? `<button class="btn btn-sm btn-secondary" onclick="revokeDelegation(${d.id})">🔴 Revoke</button>` : '—'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : '<div style="padding:20px;text-align:center;color:var(--grey-600)">No delegations created yet</div>';
+  
+  // Render "Delegations I Receive"
+  const recvDelsHtml = recvDels.length ? `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>From Manager</th><th>Start Date</th><th>End Date</th><th>Days Remaining</th></tr></thead>
+        <tbody>
+          ${recvDels.map(d => {
+            const today = new Date();
+            const endDate = new Date(d.end_date);
+            const daysLeft = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+            return `
+            <tr>
+              <td><strong>${d.delegator_name || 'Unknown'}</strong><br><small style="color:var(--grey-600)">${d.delegator_email}</small></td>
+              <td class="font-mono">${d.start_date}</td>
+              <td class="font-mono">${d.end_date}</td>
+              <td>${daysLeft > 0 ? `<span class="badge badge-info">${daysLeft} days</span>` : '<span class="badge badge-grey">Expired</span>'}</td>
+            </tr>
+          `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : '<div style="padding:20px;text-align:center;color:var(--grey-600)">No delegations to you</div>';
+  
+  document.getElementById('my-delegations-content').innerHTML = myDelsHtml;
+  document.getElementById('received-delegations-content').innerHTML = recvDelsHtml;
+}
+
+async function openCreateDelegationModal() {
+  const usersR = await api('GET', '/users');
+  const users = usersR.data.filter(u => u.role !== 'employee') || [];
+  
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'delegation-modal-overlay';
+  
+  const bodyHtml = `
+    <div id="delegation-alert"></div>
+    
+    <div class="form-group">
+      <label>Delegate To (Manager/HR)</label>
+      <select id="delegation-delegate-id">
+        <option value="">— Select a person —</option>
+        ${users.map(u => `<option value="${u.id}">${u.name} (${u.role === 'manager' ? 'Manager' : 'HR Admin'})</option>`).join('')}
+      </select>
+    </div>
+    
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label>Start Date</label>
+        <input type="date" id="delegation-start-date">
+      </div>
+      <div class="form-group">
+        <label>End Date</label>
+        <input type="date" id="delegation-end-date">
+      </div>
+    </div>
+    
+    <div class="form-group">
+      <small style="color:var(--grey-600)">💡 During this period, the delegate can approve leave requests for your team. You can revoke anytime.</small>
+    </div>`;
+  
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <h3>🔄 Create New Delegation</h3>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div class="modal-body">${bodyHtml}</div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="modal-confirm">Create Delegation</button>
+      </div>
+    </div>`;
+  
+  document.body.appendChild(overlay);
+  
+  const close = () => document.body.removeChild(overlay);
+  
+  overlay.querySelector('#modal-close-btn').onclick = close;
+  overlay.querySelector('#modal-cancel').onclick = close;
+  overlay.querySelector('#modal-confirm').onclick = async () => {
+    const delegateId = document.getElementById('delegation-delegate-id')?.value;
+    const startDate = document.getElementById('delegation-start-date')?.value;
+    const endDate = document.getElementById('delegation-end-date')?.value;
+    
+    if (!delegateId || !startDate || !endDate) {
+      document.getElementById('delegation-alert').innerHTML = `<div class="alert alert-error">⚠ Please fill all fields</div>`;
+      return false;
+    }
+    
+    const res = await api('POST', '/approval-delegations/create', {
+      delegate_id: parseInt(delegateId),
+      start_date: startDate,
+      end_date: endDate
+    });
+    
+    if (res.ok) {
+      showToast('success', 'Delegation created successfully!');
+      await loadDelegationsPage();
+      return true;
+    } else {
+      document.getElementById('delegation-alert').innerHTML = `<div class="alert alert-error">⚠ ${res.data.error || 'Failed to create delegation'}</div>`;
+      return false;
+    }
+  };
+  
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+}
+
+async function revokeDelegation(delegationId) {
+  if (!confirm('Are you sure you want to revoke this delegation?')) return;
+  
+  const res = await api('POST', '/approval-delegations/revoke', { id: delegationId });
+  
+  if (res.ok) {
+    showToast('success', 'Delegation revoked');
+    await loadDelegationsPage();
+  } else {
+    showToast('error', res.data.error || 'Failed to revoke delegation');
   }
 }
 
@@ -3339,4 +3500,36 @@ async function checkBlackoutBeforeSubmit(dates) {
   if (!r.ok) { showToast('error', 'Blackout check failed'); return false; }
   if (r.data.is_blackout) { showToast('error', 'Leave blocked during: ' + (r.data.blocking_blackout?.reason || 'Blackout')); return false; }
   return true;
+}
+
+// ── R8: Manage Delegations ───────────────────────────────────────────────────
+async function renderDelegations() {
+  if (state.user.role !== 'manager' && state.user.role !== 'hr_admin') {
+    document.getElementById('page-content').innerHTML = `<div class="alert alert-error">⚠ You don't have permission to manage delegations</div>`;
+    return;
+  }
+  
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header">
+      <div><h1>🔄 Manage Delegations</h1><p>Create & manage leave approval delegations</p></div>
+    </div>
+    <div class="page-content">
+      <div class="card">
+        <div class="card-header"><h3>Delegations I've Made</h3></div>
+        <div id="my-delegations-content">
+          <div style="text-align:center;padding:40px;color:var(--grey-600)">Loading...</div>
+        </div>
+        <button class="btn btn-primary" onclick="openCreateDelegationModal()" style="margin-top:16px">+ Create New Delegation</button>
+      </div>
+      
+      <div class="card" style="margin-top:20px">
+        <div class="card-header"><h3>Delegations I Receive</h3><span class="text-sm text-muted">Leave approvals delegated to me</span></div>
+        <div id="received-delegations-content">
+          <div style="text-align:center;padding:40px;color:var(--grey-600)">Loading...</div>
+        </div>
+      </div>
+    </div>
+  `;
+  await loadDelegationsPage();
 }
