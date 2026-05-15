@@ -533,106 +533,95 @@ def init_db():
         conn.rollback()
         sys.stderr.write(f"[init_db] R9 FAILED: {e}\n")
         sys.stderr.flush()
+
+    # Release 12 · Training Management
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS trainings (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                issuer TEXT,
+                is_mandatory BOOLEAN DEFAULT FALSE,
+                category TEXT,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                location TEXT,
+                target_type TEXT DEFAULT 'all',
+                target_department_id INTEGER,
+                target_role TEXT,
+                target_user_ids_json TEXT,
+                created_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_training_dates ON trainings(start_date, end_date);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_training_mandatory ON trainings(is_mandatory);")
+        
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS training_enrollments (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                training_id INTEGER NOT NULL REFERENCES trainings(id),
+                enrolled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                status TEXT DEFAULT 'pending_approval',
+                manager_approved BOOLEAN DEFAULT FALSE,
+                manager_approved_by INTEGER REFERENCES users(id),
+                manager_approved_at TIMESTAMP WITH TIME ZONE,
+                rejection_reason TEXT,
+                UNIQUE(user_id, training_id)
+            );
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_enroll_user ON training_enrollments(user_id);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_enroll_status ON training_enrollments(status);")
+        
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS training_certificates (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                training_id INTEGER NOT NULL REFERENCES trainings(id),
+                enrollment_id INTEGER REFERENCES training_enrollments(id),
+                certificate_number TEXT,
+                issued_date DATE NOT NULL,
+                expiry_date DATE NOT NULL,
+                issuer_name TEXT,
+                status TEXT DEFAULT 'pending_approval',
+                approved_by INTEGER REFERENCES users(id),
+                approved_at TIMESTAMP WITH TIME ZONE,
+                notes TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                UNIQUE(user_id, certificate_number)
+            );
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_cert_user ON training_certificates(user_id);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_cert_expiry ON training_certificates(expiry_date);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_cert_status ON training_certificates(status);")
+        
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS training_reminders (
+                id SERIAL PRIMARY KEY,
+                certificate_id INTEGER NOT NULL REFERENCES training_certificates(id),
+                reminder_type TEXT,
+                sent_at TIMESTAMP WITH TIME ZONE,
+                sent_to_email TEXT,
+                sent_to_manager_email TEXT
+            );
+        """)
+        
+        c.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R12_training_management', 'Training Management & Professional Certification Tracking')
+            ON CONFLICT DO NOTHING;
+        """)
+        conn.commit()
+        sys.stderr.write("[init_db] R12 Training Management applied\n")
+        sys.stderr.flush()
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R12 FAILED: {e}\n")
+        sys.stderr.flush()
+
     conn.commit(); conn.close()
-
-# R12 TRAINING MANAGEMENT - BACKEND CODE
-# Add this to app.py in the following order:
-# 1. Database migrations in init_db()
-# 2. API endpoints after existing endpoints
-# 3. Helper functions at end of file
-
-# ════════════════════════════════════════════════════════════════════════════
-# PART 1: DATABASE MIGRATIONS (Add to init_db() function)
-# ════════════════════════════════════════════════════════════════════════════
-
-# Release 12 · Training Management
-try:
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS trainings (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            issuer TEXT,
-            is_mandatory BOOLEAN DEFAULT FALSE,
-            category TEXT,
-            start_date DATE NOT NULL,
-            end_date DATE NOT NULL,
-            location TEXT,
-            target_type TEXT DEFAULT 'all',
-            target_department_id INTEGER,
-            target_role TEXT,
-            target_user_ids_json TEXT,
-            created_by INTEGER REFERENCES users(id),
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        );
-    """)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_training_dates ON trainings(start_date, end_date);")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_training_mandatory ON trainings(is_mandatory);")
-    
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS training_enrollments (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id),
-            training_id INTEGER NOT NULL REFERENCES trainings(id),
-            enrolled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            status TEXT DEFAULT 'pending_approval',
-            manager_approved BOOLEAN DEFAULT FALSE,
-            manager_approved_by INTEGER REFERENCES users(id),
-            manager_approved_at TIMESTAMP WITH TIME ZONE,
-            rejection_reason TEXT,
-            UNIQUE(user_id, training_id)
-        );
-    """)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_enroll_user ON training_enrollments(user_id);")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_enroll_status ON training_enrollments(status);")
-    
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS training_certificates (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id),
-            training_id INTEGER NOT NULL REFERENCES trainings(id),
-            enrollment_id INTEGER REFERENCES training_enrollments(id),
-            certificate_number TEXT,
-            issued_date DATE NOT NULL,
-            expiry_date DATE NOT NULL,
-            issuer_name TEXT,
-            status TEXT DEFAULT 'pending_approval',
-            approved_by INTEGER REFERENCES users(id),
-            approved_at TIMESTAMP WITH TIME ZONE,
-            notes TEXT,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            UNIQUE(user_id, certificate_number)
-        );
-    """)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_cert_user ON training_certificates(user_id);")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_cert_expiry ON training_certificates(expiry_date);")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_cert_status ON training_certificates(status);")
-    
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS training_reminders (
-            id SERIAL PRIMARY KEY,
-            certificate_id INTEGER NOT NULL REFERENCES training_certificates(id),
-            reminder_type TEXT,
-            sent_at TIMESTAMP WITH TIME ZONE,
-            sent_to_email TEXT,
-            sent_to_manager_email TEXT
-        );
-    """)
-    
-    c.execute("""
-        INSERT INTO schema_migrations (release_id, notes)
-        VALUES ('R12_training_management', 'Training Management & Professional Certification Tracking')
-        ON CONFLICT DO NOTHING;
-    """)
-    conn.commit()
-    print("[init_db] R12 Training Management applied")
-except Exception as e:
-    conn.rollback()
-    print(f"[init_db] R12 FAILED: {e}")
-
-# ────────────────────────────────────────────────────────────────────────────────
-# END R12 BACKEND CODE
-# ────────────────────────────────────────────────────────────────────────────────
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def get_setting(key, default=''):
