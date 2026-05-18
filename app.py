@@ -534,6 +534,39 @@ def init_db():
         sys.stderr.write(f"[init_db] R9 FAILED: {e}\n")
         sys.stderr.flush()
 
+# Release 10 · Announcements
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS announcements (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                priority TEXT DEFAULT 'normal',
+                created_by INTEGER NOT NULL REFERENCES users(id),
+                audience_type TEXT NOT NULL,
+                audience_dept_id INTEGER REFERENCES branches(id),
+                audience_group_ids_json TEXT,
+                audience_user_ids_json TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                published_at TIMESTAMP WITH TIME ZONE,
+                expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                is_archived BOOLEAN DEFAULT FALSE,
+                archived_at TIMESTAMP WITH TIME ZONE
+            );
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_announcement_expires ON announcements(expires_at);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_announcement_created_by ON announcements(created_by);")
+        c.execute("""
+                INSERT INTO schema_migrations (release_id, notes)
+                VALUES ('R10_announcements', 'Announcement management with priority levels and audience targeting')
+                ON CONFLICT DO NOTHING;
+        """)
+        conn.commit()
+        print("[init_db] R10 Announcements applied")
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] R10 FAILED: {e}")
+
     # Release 12 · Training Management
     try:
         c.execute("""
@@ -2691,42 +2724,6 @@ def review_deletion():
 # R10: ANNOUNCEMENTS - BACKEND CODE
 # Add this to app.py (after R12 training endpoints)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DATABASE MIGRATION (Add to init_db() function, after R12)
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Release 10 · Announcements
-try:
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS announcements (
-            id SERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            priority TEXT DEFAULT 'normal',
-            created_by INTEGER NOT NULL REFERENCES users(id),
-            audience_type TEXT NOT NULL,
-            audience_dept_id INTEGER REFERENCES branches(id),
-            audience_group_ids_json TEXT,
-            audience_user_ids_json TEXT,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            published_at TIMESTAMP WITH TIME ZONE,
-            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-            is_archived BOOLEAN DEFAULT FALSE,
-            archived_at TIMESTAMP WITH TIME ZONE
-        );
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_announcement_expires ON announcements(expires_at);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_announcement_created_by ON announcements(created_by);")
-    cur.execute("""
-        INSERT INTO schema_migrations (release_id, notes)
-        VALUES ('R10_announcements', 'Announcement management with priority levels and audience targeting')
-        ON CONFLICT DO NOTHING;
-    """)
-    conn.commit()
-    print("[init_db] R10 Announcements applied")
-except Exception as e:
-    conn.rollback()
-    print(f"[init_db] R10 FAILED: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API ENDPOINTS
