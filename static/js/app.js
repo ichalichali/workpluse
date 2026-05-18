@@ -352,7 +352,7 @@ function renderShell() {
             <p style="padding: 1rem; color: var(--text-s); text-align: center;">Loading...</p>
           </div>
           <div class="dropdown-footer">
-            <button class="btn btn-sm" onclick="navigate('announcements-for-employees')">View All</button>
+           <button class="btn-secondary" onclick="navigate('announcements-for-employees')" style="width: 100%; margin-top: 10px;">View All Announcements</button>
           </div>
         </div>
       </div>
@@ -397,6 +397,9 @@ async function loadPage() {
     case 'audit':                 return renderAudit();
     case 'blackout-dates':        return renderBlackoutDates();
     case 'pdp':                   return renderPDP();
+    case 'announcements-for-employees':
+    loadEmployeeAnnouncements();  // ← Add this line
+    return renderAnnouncementsForEmployees();
     case 'training-management':   return renderTrainingManagement();
     case 'training-catalog':      return renderTrainingCatalog();
     case 'training-approvals':    return renderTrainingApprovals();
@@ -4737,30 +4740,109 @@ document.addEventListener('click', (e) => {
   }
 });
 
-async function renderAnnouncementsForEmployees() {
-  const el = document.getElementById('page-content');
-  el.innerHTML = `
-    <div class="page-header">
-      <h1>📢 Announcements</h1>
-      <p class="text-s text-muted">Stay informed with important updates</p>
-    </div>
+function renderAnnouncementsForEmployees() {
+    return `
+        <div class="page-header">
+            <h1>📢 Announcements</h1>
+            <p>All company announcements and updates</p>
+        </div>
+        
+        <div class="announcement-filters" style="margin-bottom: 20px; display: flex; gap: 10px;">
+            <select id="ann-filter" onchange="filterEmployeeAnnouncements()" style="padding: 8px; border-radius: 4px; border: 1px solid var(--border-color);">
+                <option value="all">All Announcements</option>
+                <option value="active">Active Only</option>
+                <option value="expired">Expired Only</option>
+            </select>
+        </div>
+        
+        <div id="announcements-list-container" style="display: grid; gap: 15px;">
+            <p style="text-align: center; color: var(--text-secondary);">Loading announcements...</p>
+        </div>
+    `;
+}
+
+async function loadEmployeeAnnouncements() {
+    try {
+        const resp = await api('GET', '/announcements/all-for-employee');
+        if (!resp || resp.error) {
+            showToast('error', 'Failed to load announcements');
+            return;
+        }
+        
+        window.allAnnouncementsData = resp; // Store for filtering
+        displayEmployeeAnnouncements(resp);
+    } catch (e) {
+        console.error('Error loading announcements:', e);
+        showToast('error', 'Error loading announcements');
+    }
+}
+
+function displayEmployeeAnnouncements(announcements) {
+    const container = document.getElementById('announcements-list-container');
     
-    <div class="filters mb-4">
-      <select id="ann-priority-filter" class="btn" onchange="loadEmployeeAnnouncements()">
-        <option value="">All Priorities</option>
-        <option value="critical">🔴 Critical</option>
-        <option value="urgent">🟠 Urgent</option>
-        <option value="normal">🟡 Normal</option>
-        <option value="info">🟢 Info</option>
-      </select>
-    </div>
+    if (!announcements || announcements.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">No announcements</p>';
+        return;
+    }
     
-    <div id="announcements-content">
-      <p style="text-align: center; color: var(--text-s);">Loading announcements...</p>
-    </div>
-  `;
-  
-  await loadEmployeeAnnouncements();
+    const filter = document.getElementById('ann-filter')?.value || 'all';
+    const filtered = announcements.filter(a => {
+        if (filter === 'active') return !a.is_expired;
+        if (filter === 'expired') return a.is_expired;
+        return true;
+    });
+    
+    if (filtered.length === 0) {
+        container.innerHTML = `<p style="text-align: center; color: var(--text-secondary);">No ${filter === 'all' ? '' : filter} announcements</p>`;
+        return;
+    }
+    
+    container.innerHTML = filtered.map(ann => `
+        <div class="announcement-card" style="
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            background: var(--surface);
+            ${ann.is_expired ? 'opacity: 0.7;' : ''}
+        ">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+                <div style="flex: 1;">
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <h3 style="margin: 0; flex: 1;">${escapeHtml(ann.title)}</h3>
+                        <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; 
+                            background: ${getPriorityColor(ann.priority)}; color: white;">
+                            ${getPriorityEmoji(ann.priority)} ${ann.priority}
+                        </span>
+                        ${ann.is_expired ? `
+                            <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;
+                                background: var(--text-secondary); color: white;">
+                                ⏰ Expired
+                            </span>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+            
+            <p style="margin: 0 0 12px 0; color: var(--text-secondary); line-height: 1.5;">
+                ${escapeHtml(ann.body)}
+            </p>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-secondary);">
+                <div>
+                    <strong>Created:</strong> ${new Date(ann.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </div>
+                <div>
+                    <strong>Expires:</strong> ${ann.expires_at ? new Date(ann.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function filterEmployeeAnnouncements() {
+    if (window.allAnnouncementsData) {
+        displayEmployeeAnnouncements(window.allAnnouncementsData);
+    }
 }
 
 async function loadEmployeeAnnouncements() {
