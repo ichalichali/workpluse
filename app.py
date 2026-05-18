@@ -2888,16 +2888,15 @@ def get_my_announcements():
         # Get user's department
         c.execute("SELECT branch_id FROM users WHERE id = %s", (user_id,))
         user = c.fetchone()
-        user_dept = user[0] if user else None
-        
+        user_dept = user['branch_id'] if user else None
         # Get all non-archived announcements
         c.execute("""
-            SELECT id, title, body, priority, created_at, expires_at, 
+            SELECT id, title, body, priority, created_at, expires_at,
                    audience_type, audience_dept_id, audience_group_ids_json, audience_user_ids_json
             FROM announcements
             WHERE is_archived = FALSE
             AND expires_at > NOW()
-            ORDER BY 
+            ORDER BY
                 CASE priority
                     WHEN 'critical' THEN 1
                     WHEN 'urgent' THEN 2
@@ -2907,41 +2906,36 @@ def get_my_announcements():
                 END,
                 created_at DESC
         """)
-        
         announcements = c.fetchall()
         result = []
-        
         for ann in announcements:
             # Check if announcement applies to this user
-            audience_type = ann[6]
+            audience_type = ann['audience_type']
             applies = False
-            
             if audience_type == 'all':
                 applies = True
-            elif audience_type == 'department' and ann[7] == user_dept:
+            elif audience_type == 'department' and ann['audience_dept_id'] == user_dept:
                 applies = True
             elif audience_type == 'group':
-                group_ids = json.loads(ann[8]) if ann[8] else []
+                group_ids = json.loads(ann['audience_group_ids_json']) if ann['audience_group_ids_json'] else []
                 if user_id in group_ids:
                     applies = True
             elif audience_type == 'individual':
-                user_ids = json.loads(ann[9]) if ann[9] else []
+                user_ids = json.loads(ann['audience_user_ids_json']) if ann['audience_user_ids_json'] else []
                 if user_id in user_ids:
                     applies = True
-            
             if applies:
                 result.append({
-                    'id': ann[0],
-                    'title': ann[1],
-                    'body': ann[2],
-                    'priority': ann[3],
-                    'created_at': ann[4].isoformat() if ann[4] else None,
-                    'expires_at': ann[5].isoformat() if ann[5] else None,
+                    'id': ann['id'],
+                    'title': ann['title'],
+                    'body': ann['body'],
+                    'priority': ann['priority'],
+                    'created_at': ann['created_at'].isoformat() if ann['created_at'] else None,
+                    'expires_at': ann['expires_at'].isoformat() if ann['expires_at'] else None,
+                    'creator_name': ann.get('creator_name', 'Unknown'),
                 })
-        
         conn.close()
         return jsonify(result)
-    
     except Exception as e:
         conn.close()
         return {'error': str(e)}, 400
