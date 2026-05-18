@@ -387,6 +387,7 @@ async function loadPage() {
       }
       return renderDeletionRequests();
     }
+    case 'announcements':         return renderAnnouncements();
   }
 }
 
@@ -3428,7 +3429,7 @@ const MOTIVATIONAL_QUOTES = [
   "Mindsetmu adalah satu-satunya batasan yang ada.",
   "Fokus pada tujuan, bukan pada keluh kesah. Bergeraklah maju! 🏃",
   "Kesuksesan dimulai dengan satu langkah kecil menuju perubahan.",
-  "Hanya orang yang menakdirkan dirinya hidup susah yang nggak keberatan datang terlambat.",
+  "Jangan membandingkan dirimu dengan orang lain. Bandingkan dengan dirimu kemarin.",
   "Kepercayaan diri adalah hasil dari konsistensi dan kerja keras.",
   "Setiap hari yang hadir tepat waktu adalah bukti dedikasi dirimu.",
   "Masa depan milik mereka yang siap bekerja keras hari ini.",
@@ -4266,7 +4267,6 @@ function viewCertDetails(cert) {
 // ════════════════════════════════════════════════════════════════════════════
 // END R12 PHASE 2 FRONTEND
 // ════════════════════════════════════════════════════════════════════════════
-
 // ════════════════════════════════════════════════════════════════════════════
 // R10: ANNOUNCEMENTS
 // ════════════════════════════════════════════════════════════════════════════
