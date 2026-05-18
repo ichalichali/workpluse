@@ -2943,6 +2943,7 @@ def get_my_announcements():
 def get_all_announcements_for_employee():
     """Get all announcements (active + expired) for employee view"""
     user_id = session.get('user_id')
+    print(f"[DEBUG] user_id: {user_id}")  # ← ADD THIS LINE
     if not user_id: return {'error': 'Not authenticated'}, 401
     
     conn = get_db()
@@ -2952,6 +2953,7 @@ def get_all_announcements_for_employee():
         c.execute("SELECT branch_id FROM users WHERE id = %s", (user_id,))
         user = c.fetchone()
         user_dept = user['branch_id'] if user else None
+        print(f"[DEBUG] user_dept: {user_dept}")  # ← ADD THIS LINE
         
         # Get ALL non-archived announcements (active + expired)
         c.execute("""
@@ -2959,28 +2961,19 @@ def get_all_announcements_for_employee():
                    audience_type, audience_dept_id, audience_group_ids_json, audience_user_ids_json
             FROM announcements
             WHERE is_archived = FALSE
-            ORDER BY
-                CASE 
-                    WHEN expires_at > NOW() THEN 0  -- Active first
-                    ELSE 1                           -- Expired last
-                END,
-                CASE priority
-                    WHEN 'critical' THEN 1
-                    WHEN 'urgent' THEN 2
-                    WHEN 'normal' THEN 3
-                    WHEN 'info' THEN 4
-                    ELSE 5
-                END,
-                created_at DESC
+            ORDER BY created_at DESC
         """)
         announcements = c.fetchall()
+        print(f"[DEBUG] announcements found: {len(announcements)}")  # ← ADD THIS LINE
+        
         result = []
         for ann in announcements:
-            # Check if announcement applies to this user
             audience_type = ann['audience_type']
+            print(f"[DEBUG] checking ann {ann['id']}: audience_type={audience_type}")  # ← ADD THIS LINE
             applies = False
             if audience_type == 'all':
                 applies = True
+                print(f"[DEBUG] ann {ann['id']} applies: is 'all'")  # ← ADD THIS LINE
             elif audience_type == 'department' and ann['audience_dept_id'] == user_dept:
                 applies = True
             elif audience_type == 'group':
@@ -3004,9 +2997,11 @@ def get_all_announcements_for_employee():
                     'is_expired': is_expired,
                 })
         
+        print(f"[DEBUG] result count: {len(result)}")  # ← ADD THIS LINE
         conn.close()
         return jsonify(result)
     except Exception as e:
+        print(f"[ERROR] {e}")  # ← ADD THIS LINE
         conn.close()
         return {'error': str(e)}, 400
 
