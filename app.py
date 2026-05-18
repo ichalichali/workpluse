@@ -2688,6 +2688,320 @@ def review_deletion():
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
+# R10: ANNOUNCEMENTS - BACKEND CODE
+# Add this to app.py (after R12 training endpoints)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DATABASE MIGRATION (Add to init_db() function, after R12)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Release 10 · Announcements
+try:
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS announcements (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            priority TEXT DEFAULT 'normal',
+            created_by INTEGER NOT NULL REFERENCES users(id),
+            audience_type TEXT NOT NULL,
+            audience_dept_id INTEGER REFERENCES branches(id),
+            audience_group_ids_json TEXT,
+            audience_user_ids_json TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            published_at TIMESTAMP WITH TIME ZONE,
+            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            is_archived BOOLEAN DEFAULT FALSE,
+            archived_at TIMESTAMP WITH TIME ZONE
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_announcement_expires ON announcements(expires_at);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_announcement_created_by ON announcements(created_by);")
+    cur.execute("""
+        INSERT INTO schema_migrations (release_id, notes)
+        VALUES ('R10_announcements', 'Announcement management with priority levels and audience targeting')
+        ON CONFLICT DO NOTHING;
+    """)
+    conn.commit()
+    print("[init_db] R10 Announcements applied")
+except Exception as e:
+    conn.rollback()
+    print(f"[init_db] R10 FAILED: {e}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# API ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/announcements/create', methods=['POST'])
+def create_announcement():
+    """HR Admin creates announcement"""
+    if session.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    
+    data = request.get_json()
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        # Insert announcement
+        c.execute("""
+            INSERT INTO announcements (title, body, priority, created_by, audience_type, 
+                                      audience_dept_id, audience_group_ids_json, audience_user_ids_json, 
+                                      published_at, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+            RETURNING id
+        """, (
+            data.get('title'),
+            data.get('body'),
+            data.get('priority', 'normal'),
+            session['user_id'],
+            data.get('audience_type'),
+            data.get('audience_dept_id'),
+            json.dumps(data.get('audience_group_ids', [])) if data.get('audience_group_ids') else None,
+            json.dumps(data.get('audience_user_ids', [])) if data.get('audience_user_ids') else None,
+            data.get('expires_at')
+        ))
+        
+        announcement_id = c.fetchone()[0]
+        
+        # Audit log
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (session['user_id'], 'announcement_create', 'announcement', announcement_id, 
+              request.remote_addr, request.headers.get('User-Agent', '')))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True, 'id': announcement_id})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+
+@app.route('/api/announcements/list', methods=['GET'])
+def list_announcements():
+    """HR Admin lists all announcements (active, archived, or all)"""
+    if session.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    
+    status = request.args.get('status', 'active')  # active | archived | all
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        if status == 'active':
+            c.execute("""
+                SELECT id, title, body, priority, created_by, audience_type, 
+                       audience_dept_id, created_at, expires_at
+                FROM announcements
+                WHERE is_archived = FALSE
+                ORDER BY expires_at DESC, created_at DESC
+            """)
+        elif status == 'archived':
+            c.execute("""
+                SELECT id, title, body, priority, created_by, audience_type, 
+                       audience_dept_id, created_at, expires_at
+                FROM announcements
+                WHERE is_archived = TRUE
+                ORDER BY archived_at DESC
+            """)
+        else:  # all
+            c.execute("""
+                SELECT id, title, body, priority, created_by, audience_type, 
+                       audience_dept_id, created_at, expires_at
+                FROM announcements
+                ORDER BY created_at DESC
+            """)
+        
+        rows = c.fetchall()
+        result = []
+        
+        for row in rows:
+            # Get creator name
+            c.execute("SELECT first_name, last_name FROM users WHERE id = %s", (row[4],))
+            creator = c.fetchone()
+            creator_name = f"{creator[0]} {creator[1]}" if creator else "Unknown"
+            
+            # Get audience dept name if applicable
+            dept_name = None
+            if row[5] == 'department' and row[6]:
+                c.execute("SELECT name FROM branches WHERE id = %s", (row[6],))
+                dept = c.fetchone()
+                dept_name = dept[0] if dept else None
+            
+            result.append({
+                'id': row[0],
+                'title': row[1],
+                'body': row[2],
+                'priority': row[3],
+                'created_by': row[4],
+                'creator_name': creator_name,
+                'audience_type': row[5],
+                'audience_dept_name': dept_name,
+                'created_at': row[7].isoformat() if row[7] else None,
+                'expires_at': row[8].isoformat() if row[8] else None,
+            })
+        
+        conn.close()
+        return jsonify(result)
+    
+    except Exception as e:
+        conn.close()
+        return {'error': str(e)}, 400
+
+
+@app.route('/api/announcements/my-announcements', methods=['GET'])
+def get_my_announcements():
+    """Get announcements targeted at current user"""
+    if not session.get('user_id'): return {'error': 'Unauthorized'}, 403
+    
+    user_id = session['user_id']
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        # Get user's department
+        c.execute("SELECT branch_id FROM users WHERE id = %s", (user_id,))
+        user = c.fetchone()
+        user_dept = user[0] if user else None
+        
+        # Get all non-archived announcements
+        c.execute("""
+            SELECT id, title, body, priority, created_at, expires_at, 
+                   audience_type, audience_dept_id, audience_group_ids_json, audience_user_ids_json
+            FROM announcements
+            WHERE is_archived = FALSE
+            AND expires_at > NOW()
+            ORDER BY 
+                CASE priority
+                    WHEN 'critical' THEN 1
+                    WHEN 'urgent' THEN 2
+                    WHEN 'normal' THEN 3
+                    WHEN 'info' THEN 4
+                    ELSE 5
+                END,
+                created_at DESC
+        """)
+        
+        announcements = c.fetchall()
+        result = []
+        
+        for ann in announcements:
+            # Check if announcement applies to this user
+            audience_type = ann[6]
+            applies = False
+            
+            if audience_type == 'all':
+                applies = True
+            elif audience_type == 'department' and ann[7] == user_dept:
+                applies = True
+            elif audience_type == 'group':
+                group_ids = json.loads(ann[8]) if ann[8] else []
+                if user_id in group_ids:
+                    applies = True
+            elif audience_type == 'individual':
+                user_ids = json.loads(ann[9]) if ann[9] else []
+                if user_id in user_ids:
+                    applies = True
+            
+            if applies:
+                result.append({
+                    'id': ann[0],
+                    'title': ann[1],
+                    'body': ann[2],
+                    'priority': ann[3],
+                    'created_at': ann[4].isoformat() if ann[4] else None,
+                    'expires_at': ann[5].isoformat() if ann[5] else None,
+                })
+        
+        conn.close()
+        return jsonify(result)
+    
+    except Exception as e:
+        conn.close()
+        return {'error': str(e)}, 400
+
+
+@app.route('/api/announcements/<int:announcement_id>', methods=['PUT'])
+def update_announcement(announcement_id):
+    """HR Admin updates announcement"""
+    if session.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    
+    data = request.get_json()
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        # Get current announcement
+        c.execute("SELECT id FROM announcements WHERE id = %s", (announcement_id,))
+        if not c.fetchone():
+            conn.close()
+            return {'error': 'Announcement not found'}, 404
+        
+        # Update announcement
+        c.execute("""
+            UPDATE announcements
+            SET title = %s, body = %s, priority = %s, expires_at = %s, is_archived = %s
+            WHERE id = %s
+        """, (
+            data.get('title'),
+            data.get('body'),
+            data.get('priority'),
+            data.get('expires_at'),
+            data.get('is_archived', False),
+            announcement_id
+        ))
+        
+        # Audit log
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (session['user_id'], 'announcement_update', 'announcement', announcement_id,
+              request.remote_addr, request.headers.get('User-Agent', '')))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+
+@app.route('/api/announcements/<int:announcement_id>', methods=['DELETE'])
+def delete_announcement(announcement_id):
+    """HR Admin archives (soft-deletes) announcement"""
+    if session.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    
+    conn = get_db()
+    c = conn.cursor()
+    
+    try:
+        # Soft delete (archive)
+        c.execute("""
+            UPDATE announcements
+            SET is_archived = TRUE, archived_at = NOW()
+            WHERE id = %s
+        """, (announcement_id,))
+        
+        # Audit log
+        c.execute("""
+            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (session['user_id'], 'announcement_delete', 'announcement', announcement_id,
+              request.remote_addr, request.headers.get('User-Agent', '')))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+    
 # ════════════════════════════════════════════════════════════════════════════
 # PART 2: API ENDPOINTS (Add after existing routes, before closing)
 # ════════════════════════════════════════════════════════════════════════════

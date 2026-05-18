@@ -3425,7 +3425,7 @@ const MOTIVATIONAL_QUOTES = [
   "Mindsetmu adalah satu-satunya batasan yang ada.",
   "Fokus pada tujuan, bukan pada keluh kesah. Bergeraklah maju! 🏃",
   "Kesuksesan dimulai dengan satu langkah kecil menuju perubahan.",
-  "Jangan membandingkan dirimu dengan orang lain. Bandingkan dengan dirimu kemarin.",
+  "Hanya orang yang menakdirkan dirinya hidup susah yang nggak keberatan datang terlambat.",
   "Kepercayaan diri adalah hasil dari konsistensi dan kerja keras.",
   "Setiap hari yang hadir tepat waktu adalah bukti dedikasi dirimu.",
   "Masa depan milik mereka yang siap bekerja keras hari ini.",
@@ -3446,13 +3446,13 @@ const MOTIVATIONAL_QUOTES = [
   // English quotes
   "Success is built on small daily victories. Keep going! 🌟",
   "Your discipline today is your freedom tomorrow.",
-  "Don't just dream it, do it. Start today! 💪",
+  "If you are 15 minutes early, you are on time. If you are on time, you are late! 💪",
   "Every on-time arrival is a step toward excellence.",
   "Progress is progress, no matter how small. Keep moving! 📈",
-  "Don't just watch others succeed, become one of them.",
+  "Better three hours too soon than a minute too late. — William Shakespeare",
   "Excellence is a habit, not an act. Build it now! 💎",
   "Being on time shows respect, reliability, and professionalism.",
-  "You are stronger than your doubts. Keep going!",
+  "Punctuality is the art of guessing how late the other fellow is going to be",
   "Success is 1% inspiration and 99% perspiration.",
   "Focus on being better than you were yesterday.",
   "Your dedication today shapes your tomorrow.",
@@ -4262,4 +4262,383 @@ function viewCertDetails(cert) {
 
 // ════════════════════════════════════════════════════════════════════════════
 // END R12 PHASE 2 FRONTEND
+// ════════════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════════════
+// R10: ANNOUNCEMENTS
+// ════════════════════════════════════════════════════════════════════════════
+
+async function renderAnnouncements() {
+  if (state.user.role !== 'hr_admin') {
+    showToast('error', 'HR Admin access only');
+    navigate('dashboard');
+    return;
+  }
+  
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header">
+      <h1>📢 Announcements</h1>
+      <p class="text-s text-muted">Broadcast announcements to employees</p>
+    </div>
+    
+    <div class="flex gap-2 mb-4">
+      <button class="btn btn-primary" onclick="openCreateAnnouncementModal()">
+        + New Announcement
+      </button>
+      <select id="announcement-filter" class="btn" onchange="loadAnnouncementsList()">
+        <option value="active">Active</option>
+        <option value="archived">Archived</option>
+        <option value="all">All</option>
+      </select>
+    </div>
+    
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Priority</th>
+            <th>Audience</th>
+            <th>Expires</th>
+            <th>Created By</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="announcements-list">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-s);">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    
+    <!-- Create/Edit Modal -->
+    <div id="announcement-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="announcement-modal-title">New Announcement</h2>
+          <button class="modal-close" onclick="closeAnnouncementModal()">✕</button>
+        </div>
+        
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Title *</label>
+            <input type="text" id="ann-title" placeholder="Announcement title" />
+          </div>
+          
+          <div class="form-group">
+            <label>Message *</label>
+            <textarea id="ann-body" placeholder="Enter announcement message" rows="6"></textarea>
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label>Priority *</label>
+              <select id="ann-priority">
+                <option value="info">🟢 Info</option>
+                <option value="normal">🟡 Normal</option>
+                <option value="urgent">🟠 Urgent</option>
+                <option value="critical">🔴 Critical</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label>Expires At *</label>
+              <input type="datetime-local" id="ann-expires" />
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label>Send To *</label>
+            <div class="flex gap-2" style="flex-wrap: wrap;">
+              <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+                <input type="radio" name="audience-type" value="all" onchange="updateAudienceFields()" checked />
+                All Employees
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+                <input type="radio" name="audience-type" value="department" onchange="updateAudienceFields()" />
+                Specific Department
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+                <input type="radio" name="audience-type" value="group" onchange="updateAudienceFields()" />
+                Group of People
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+                <input type="radio" name="audience-type" value="individual" onchange="updateAudienceFields()" />
+                Individual
+              </label>
+            </div>
+          </div>
+          
+          <div id="audience-dept-field" class="form-group" style="display: none;">
+            <label>Select Department *</label>
+            <select id="ann-dept-id"></select>
+          </div>
+          
+          <div id="audience-group-field" class="form-group" style="display: none;">
+            <label>Select Employees *</label>
+            <div id="ann-employees-selector" style="max-height: 250px; overflow-y: auto; border: 1px solid var(--surface-s); border-radius: 0.5rem; padding: 0.5rem;">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+              <input type="checkbox" id="ann-archive" />
+              Archive this announcement
+            </label>
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeAnnouncementModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveAnnouncement()">Save Announcement</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  await loadAnnouncementsList();
+}
+
+async function loadAnnouncementsList() {
+  const status = document.getElementById('announcement-filter')?.value || 'active';
+  try {
+    const r = await api('GET', `/announcements/list?status=${status}`);
+    if (!r.ok) {
+      showToast('error', 'Failed to load announcements');
+      return;
+    }
+    
+    const announcements = r.data || [];
+    const html = announcements.length === 0 
+      ? '<tr><td colspan="6" style="text-align: center; color: var(--text-s);">No announcements</td></tr>'
+      : announcements.map(a => `
+          <tr>
+            <td><strong>${escapeHtml(a.title)}</strong></td>
+            <td>
+              <span style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 0.25rem; background: ${getPriorityColor(a.priority)}; color: white; font-size: 0.875rem;">
+                ${getPriorityEmoji(a.priority)} ${a.priority}
+              </span>
+            </td>
+            <td>${getAudienceLabel(a.audience_type, a.audience_dept_name)}</td>
+            <td>${new Date(a.expires_at).toLocaleDateString()}</td>
+            <td><small>${a.creator_name}</small></td>
+            <td>
+              <button class="btn btn-sm" onclick="editAnnouncement(${a.id})">Edit</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteAnnouncement(${a.id})">Archive</button>
+            </td>
+          </tr>
+        `).join('');
+    
+    document.getElementById('announcements-list').innerHTML = html;
+  } catch (e) {
+    console.error('Error loading announcements:', e);
+    showToast('error', 'Error loading announcements');
+  }
+}
+
+function openCreateAnnouncementModal() {
+  document.getElementById('announcement-modal-title').textContent = 'New Announcement';
+  document.getElementById('ann-title').value = '';
+  document.getElementById('ann-body').value = '';
+  document.getElementById('ann-priority').value = 'normal';
+  document.getElementById('ann-expires').value = '';
+  document.getElementById('ann-archive').checked = false;
+  document.querySelector('input[name="audience-type"][value="all"]').checked = true;
+  updateAudienceFields();
+  loadDepartmentOptions();
+  loadEmployeeOptions();
+  delete document.getElementById('announcement-modal').dataset.editId;
+  document.getElementById('announcement-modal').style.display = 'flex';
+}
+
+async function editAnnouncement(id) {
+  try {
+    const r = await api('GET', `/announcements/list`);
+    const announcements = r.data || [];
+    const ann = announcements.find(a => a.id === id);
+    
+    if (!ann) {
+      showToast('error', 'Announcement not found');
+      return;
+    }
+    
+    document.getElementById('announcement-modal-title').textContent = 'Edit Announcement';
+    document.getElementById('ann-title').value = ann.title;
+    document.getElementById('ann-body').value = ann.body;
+    document.getElementById('ann-priority').value = ann.priority;
+    document.getElementById('ann-expires').value = new Date(ann.expires_at).toISOString().slice(0, 16);
+    document.getElementById('ann-archive').checked = false;
+    document.querySelector('input[name="audience-type"][value="' + ann.audience_type + '"]').checked = true;
+    updateAudienceFields();
+    loadDepartmentOptions();
+    loadEmployeeOptions();
+    document.getElementById('announcement-modal').dataset.editId = id;
+    document.getElementById('announcement-modal').style.display = 'flex';
+  } catch (e) {
+    console.error('Error editing announcement:', e);
+    showToast('error', 'Error loading announcement');
+  }
+}
+
+async function saveAnnouncement() {
+  const title = document.getElementById('ann-title').value?.trim();
+  const body = document.getElementById('ann-body').value?.trim();
+  const priority = document.getElementById('ann-priority').value;
+  const expiresAt = document.getElementById('ann-expires').value;
+  const audienceType = document.querySelector('input[name="audience-type"]:checked')?.value;
+  
+  if (!title || !body || !expiresAt || !audienceType) {
+    showToast('error', 'Fill all required fields');
+    return;
+  }
+  
+  const payload = {
+    title,
+    body,
+    priority,
+    audience_type: audienceType,
+    expires_at: new Date(expiresAt).toISOString(),
+    is_archived: document.getElementById('ann-archive').checked
+  };
+  
+  // Add audience-specific fields
+  if (audienceType === 'department') {
+    payload.audience_dept_id = parseInt(document.getElementById('ann-dept-id').value);
+  } else if (audienceType === 'group' || audienceType === 'individual') {
+    const selected = Array.from(document.querySelectorAll('#ann-employees-selector input:checked'))
+      .map(cb => parseInt(cb.value));
+    if (selected.length === 0) {
+      showToast('error', 'Select at least one employee');
+      return;
+    }
+    if (audienceType === 'group') {
+      payload.audience_group_ids = selected;
+    } else {
+      payload.audience_user_ids = selected;
+    }
+  }
+  
+  try {
+    const editId = document.getElementById('announcement-modal').dataset.editId;
+    let r;
+    
+    if (editId) {
+      r = await api('PUT', `/announcements/${editId}`, payload);
+    } else {
+      r = await api('POST', `/announcements/create`, payload);
+    }
+    
+    if (r.ok) {
+      showToast('success', editId ? 'Announcement updated' : 'Announcement created');
+      closeAnnouncementModal();
+      await loadAnnouncementsList();
+    } else {
+      showToast('error', r.error || 'Failed to save announcement');
+    }
+  } catch (e) {
+    console.error('Error saving announcement:', e);
+    showToast('error', 'Error saving announcement');
+  }
+}
+
+async function deleteAnnouncement(id) {
+  if (!confirm('Archive this announcement?')) return;
+  
+  try {
+    const r = await api('DELETE', `/announcements/${id}`);
+    if (r.ok) {
+      showToast('success', 'Announcement archived');
+      await loadAnnouncementsList();
+    } else {
+      showToast('error', 'Failed to archive announcement');
+    }
+  } catch (e) {
+    console.error('Error deleting announcement:', e);
+    showToast('error', 'Error deleting announcement');
+  }
+}
+
+function closeAnnouncementModal() {
+  document.getElementById('announcement-modal').style.display = 'none';
+  delete document.getElementById('announcement-modal').dataset.editId;
+}
+
+function updateAudienceFields() {
+  const audienceType = document.querySelector('input[name="audience-type"]:checked')?.value;
+  document.getElementById('audience-dept-field').style.display = audienceType === 'department' ? 'block' : 'none';
+  document.getElementById('audience-group-field').style.display = ['group', 'individual'].includes(audienceType) ? 'block' : 'none';
+}
+
+async function loadDepartmentOptions() {
+  try {
+    const r = await api('GET', '/branches');
+    const branches = r.data || [];
+    const html = branches.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+    document.getElementById('ann-dept-id').innerHTML = html;
+  } catch (e) {
+    console.error('Error loading departments:', e);
+  }
+}
+
+async function loadEmployeeOptions() {
+  try {
+    const r = await api('GET', '/users');
+    const employees = r.data || [];
+    const html = employees.map(emp => `
+      <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; font-weight: normal; cursor: pointer;">
+        <input type="checkbox" value="${emp.id}" />
+        ${emp.name || emp.first_name + ' ' + emp.last_name}
+      </label>
+    `).join('');
+    document.getElementById('ann-employees-selector').innerHTML = html;
+  } catch (e) {
+    console.error('Error loading employees:', e);
+  }
+}
+
+function getPriorityEmoji(priority) {
+  const map = {
+    'critical': '🔴',
+    'urgent': '🟠',
+    'normal': '🟡',
+    'info': '🟢'
+  };
+  return map[priority] || '🟡';
+}
+
+function getPriorityColor(priority) {
+  const map = {
+    'critical': '#ef4444',
+    'urgent': '#f97316',
+    'normal': '#eab308',
+    'info': '#22c55e'
+  };
+  return map[priority] || '#eab308';
+}
+
+function getAudienceLabel(type, deptName) {
+  const labels = {
+    'all': 'All Employees',
+    'department': `Department: ${deptName}`,
+    'group': 'Group',
+    'individual': 'Individual'
+  };
+  return labels[type] || type;
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  };
+  return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// END R10: ANNOUNCEMENTS
 // ════════════════════════════════════════════════════════════════════════════
