@@ -4676,7 +4676,7 @@ async function loadAnnouncementsDropdown() {
   if (state.user.role === 'hr_admin') return; // HR sees manage page instead
   
   try {
-    const r = await api('GET', '/announcements/all-for-employee');
+    const r = await api('GET', '/announcements/my-announcements');
     if (!r.ok) return;
     
     const announcements = (r.data || []).slice(0, 5); // Get 5 latest
@@ -4863,8 +4863,63 @@ function filterEmployeeAnnouncements() {
         displayEmployeeAnnouncements(window.allAnnouncementsData);
     }
 }
-.navbar-bell {
 
+}
+
+function getPriorityEmoji(priority) {
+  const map = {
+    'critical': '🔴',
+    'urgent': '🟠',
+    'normal': '🟡',
+    'info': '🟢'
+  };
+  return map[priority] || '🟡';
+}
+
+function getPriorityColor(priority) {
+  const map = {
+    'critical': '#ef4444',
+    'urgent': '#f97316',
+    'normal': '#eab308',
+    'info': '#22c55e'
+  };
+  return map[priority] || '#eab308';
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  };
+  return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CSS STYLES FOR ANNOUNCEMENTS
+// ════════════════════════════════════════════════════════════════════════════
+
+const announcementsStyles = `
+.navbar-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid var(--surface-s);
+  gap: 1rem;
+  position: relative;
+}
+
+.navbar-spacer {
+  flex: 1;
+}
+
+.navbar-bell {
+  position: relative;
+  background: none;
   border: none;
   font-size: 1.5rem;
   cursor: pointer;
