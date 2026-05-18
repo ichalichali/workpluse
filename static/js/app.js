@@ -4863,6 +4863,7 @@ function filterEmployeeAnnouncements() {
         displayEmployeeAnnouncements(window.allAnnouncementsData);
     }
 }
+.navbar-bell {
 
   border: none;
   font-size: 1.5rem;
