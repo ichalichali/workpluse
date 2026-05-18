@@ -2939,6 +2939,76 @@ def get_my_announcements():
         conn.close()
         return {'error': str(e)}, 400
 
+@app.route('/api/announcements/all-for-employee', methods=['GET'])
+def get_all_announcements_for_employee():
+    """Get all announcements (active + expired) for employee view"""
+    user_id = session.get('user_id')
+    if not user_id: return {'error': 'Not authenticated'}, 401
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        # Get user's department
+        c.execute("SELECT branch_id FROM users WHERE id = %s", (user_id,))
+        user = c.fetchone()
+        user_dept = user['branch_id'] if user else None
+        
+        # Get ALL non-archived announcements (active + expired)
+        c.execute("""
+            SELECT id, title, body, priority, created_at, expires_at,
+                   audience_type, audience_dept_id, audience_group_ids_json, audience_user_ids_json
+            FROM announcements
+            WHERE is_archived = FALSE
+            ORDER BY
+                CASE 
+                    WHEN expires_at > NOW() THEN 0  -- Active first
+                    ELSE 1                           -- Expired last
+                END,
+                CASE priority
+                    WHEN 'critical' THEN 1
+                    WHEN 'urgent' THEN 2
+                    WHEN 'normal' THEN 3
+                    WHEN 'info' THEN 4
+                    ELSE 5
+                END,
+                created_at DESC
+        """)
+        announcements = c.fetchall()
+        result = []
+        for ann in announcements:
+            # Check if announcement applies to this user
+            audience_type = ann['audience_type']
+            applies = False
+            if audience_type == 'all':
+                applies = True
+            elif audience_type == 'department' and ann['audience_dept_id'] == user_dept:
+                applies = True
+            elif audience_type == 'group':
+                group_ids = json.loads(ann['audience_group_ids_json']) if ann['audience_group_ids_json'] else []
+                if user_id in group_ids:
+                    applies = True
+            elif audience_type == 'individual':
+                user_ids = json.loads(ann['audience_user_ids_json']) if ann['audience_user_ids_json'] else []
+                if user_id in user_ids:
+                    applies = True
+            
+            if applies:
+                is_expired = ann['expires_at'] < datetime.now(timezone.utc) if ann['expires_at'] else False
+                result.append({
+                    'id': ann['id'],
+                    'title': ann['title'],
+                    'body': ann['body'],
+                    'priority': ann['priority'],
+                    'created_at': ann['created_at'].isoformat() if ann['created_at'] else None,
+                    'expires_at': ann['expires_at'].isoformat() if ann['expires_at'] else None,
+                    'is_expired': is_expired,
+                })
+        
+        conn.close()
+        return jsonify(result)
+    except Exception as e:
+        conn.close()
+        return {'error': str(e)}, 400
 
 @app.route('/api/announcements/<int:announcement_id>', methods=['PUT'])
 def update_announcement(announcement_id):
