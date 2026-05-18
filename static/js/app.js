@@ -4864,52 +4864,6 @@ function filterEmployeeAnnouncements() {
     }
 }
 
-async function loadEmployeeAnnouncements() {
-  try {
-    const r = await api('GET', '/announcements/my-announcements');
-    const r = await api('GET', '/announcements/all-for-employee');
-      document.getElementById('announcements-content').innerHTML = '<p style="color: red;">Failed to load announcements</p>';
-      return;
-    }
-    
-    let announcements = r.data || [];
-    
-    // Filter by priority if selected
-    const priorityFilter = document.getElementById('ann-priority-filter')?.value;
-    if (priorityFilter) {
-      announcements = announcements.filter(a => a.priority === priorityFilter);
-    }
-    
-    if (announcements.length === 0) {
-      document.getElementById('announcements-content').innerHTML = '<p style="text-align: center; color: var(--text-s);">No announcements at this time</p>';
-      return;
-    }
-    
-    const html = announcements.map(a => `
-      <div class="announcement-card">
-        <div class="announcement-card-header">
-          <div>
-            <span class="priority-label" style="background: ${getPriorityColor(a.priority)}; color: white; padding: 0.25rem 0.75rem; border-radius: 0.25rem; font-size: 0.875rem; font-weight: 600;">
-              ${getPriorityEmoji(a.priority)} ${a.priority.toUpperCase()}
-            </span>
-          </div>
-          <span class="text-xs text-muted">Expires: ${new Date(a.expires_at).toLocaleDateString()}</span>
-        </div>
-        <h3 style="margin: 0.75rem 0 0.5rem 0;">${escapeHtml(a.title)}</h3>
-        <p style="margin: 0.5rem 0; line-height: 1.5; color: var(--text-s);">${escapeHtml(a.body)}</p>
-        <div class="text-xs text-muted" style="margin-top: 0.75rem;">
-          From: <strong>${escapeHtml(a.creator_name)}</strong> · ${new Date(a.created_at).toLocaleString()}
-        </div>
-      </div>
-    `).join('');
-    
-    document.getElementById('announcements-content').innerHTML = html;
-  } catch (e) {
-    console.error('Error loading announcements:', e);
-    document.getElementById('announcements-content').innerHTML = '<p style="color: red;">Error loading announcements</p>';
-  }
-}
-
 function getPriorityEmoji(priority) {
   const map = {
     'critical': '🔴',
