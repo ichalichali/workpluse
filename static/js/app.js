@@ -324,6 +324,10 @@ function renderShell() {
         <button class="nav-item ${state.page==='deletion-requests'?'active':''}" onclick="navigate('deletion-requests')">
           <span class="nav-icon">🗑️</span> Deletion Requests
         </button>
+        <button class="nav-item ${state.page==='announcements'?'active':''}" onclick="navigate('announcements')">
+          <span class="nav-icon">📢</span> Announcements
+        </button>
+      </div>` : ''}
       </div>` : ''}
       <div class="sidebar-footer">
         <div class="user-card">
