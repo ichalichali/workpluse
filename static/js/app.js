@@ -352,7 +352,7 @@ function renderShell() {
             <p style="padding: 1rem; color: var(--text-s); text-align: center;">Loading...</p>
           </div>
           <div class="dropdown-footer">
-           <button class="btn-secondary" onclick="navigate('announcements-for-employees')" style="width: 100%; margin-top: 10px;">View All Announcements</button>
+           <button class="btn btn-secondary" onclick="navigate('announcements-for-employees')" style="width: 100%; margin-top: 10px;">View All Announcements</button>
           </div>
         </div>
       </div>
@@ -398,8 +398,9 @@ async function loadPage() {
     case 'blackout-dates':        return renderBlackoutDates();
     case 'pdp':                   return renderPDP();
     case 'announcements-for-employees':
-    loadEmployeeAnnouncements();  // ← Add this line
-    return renderAnnouncementsForEmployees();
+      html = renderAnnouncementsForEmployees();
+      setTimeout(() => loadEmployeeAnnouncements(), 100);
+      return html;
     case 'training-management':   return renderTrainingManagement();
     case 'training-catalog':      return renderTrainingCatalog();
     case 'training-approvals':    return renderTrainingApprovals();
