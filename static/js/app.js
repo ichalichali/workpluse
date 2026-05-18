@@ -4760,18 +4760,40 @@ function renderAnnouncementsForEmployees() {
 }
 
 async function loadEmployeeAnnouncements() {
-    try {
-       const r = await api('GET', '/announcements/all-for-employee');  // ← CHANGED
+  try {
+    const r = await api('GET', '/announcements/all-for-employee');
     if (!r.ok) {
-      document.getElementById('announcements-list-container').innerHTML = '<p style="color: red;">Failed to load announcements</p>';  // ← CHANGED
+      document.getElementById('announcements-list-container').innerHTML = '<p style="color: red;">Failed to load announcements</p>';
       return;
-        }
-        window.allAnnouncementsData = r.data; // Store for filtering
-        displayEmployeeAnnouncements(r.data);
-    } catch (e) {
-        console.error('Error loading announcements:', e);
-        showToast('error', 'Error loading announcements');
     }
+    let announcements = r.data || [];
+    if (announcements.length === 0) {
+      document.getElementById('announcements-list-container').innerHTML = '<p style="text-align: center; color: var(--text-s);">No announcements at this time</p>';
+      return;
+    }
+    const html = announcements.map(a => `
+      <div class="announcement-card" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; background: var(--surface); ${a.is_expired ? 'opacity: 0.7;' : ''}">
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div style="display: flex; gap: 10px;">
+            <span style="background: ${getPriorityColor(a.priority)}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">
+              ${getPriorityEmoji(a.priority)} ${a.priority.toUpperCase()}
+            </span>
+            ${a.is_expired ? '<span style="background: var(--text-secondary); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">⏰ Expired</span>' : ''}
+          </div>
+          <span style="font-size: 12px; color: var(--text-secondary);">Expires: ${new Date(a.expires_at).toLocaleDateString()}</span>
+        </div>
+        <h3 style="margin: 0 0 12px 0;">${escapeHtml(a.title)}</h3>
+        <p style="margin: 12px 0; line-height: 1.5; color: var(--text-secondary);">${escapeHtml(a.body)}</p>
+        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 12px;">
+          ${new Date(a.created_at).toLocaleString()}
+        </div>
+      </div>
+    `).join('');
+    document.getElementById('announcements-list-container').innerHTML = html;
+  } catch (e) {
+    console.error('Error loading announcements:', e);
+    document.getElementById('announcements-list-container').innerHTML = '<p style="color: red;">Error loading announcements</p>';
+  }
 }
 
 function displayEmployeeAnnouncements(announcements) {
@@ -4845,7 +4867,7 @@ function filterEmployeeAnnouncements() {
 async function loadEmployeeAnnouncements() {
   try {
     const r = await api('GET', '/announcements/my-announcements');
-    if (!r.ok) {
+    const r = await api('GET', '/announcements/all-for-employee');
       document.getElementById('announcements-content').innerHTML = '<p style="color: red;">Failed to load announcements</p>';
       return;
     }
