@@ -385,25 +385,22 @@ async function doLogout() {
 async function loadPage() {
   initAnnouncements(); // Load announcements dropdown
   switch(state.page) {
-    case 'dashboard':             return renderDashboard();
-    case 'attendance':            return renderAttendance();
-    case 'leave':                 return renderLeave();
-    case 'team':                  return renderTeam();
-    case 'approvals':             return renderApprovals();
-    case 'employees':             return renderEmployees();
-    case 'branches':              return renderBranches();
-    case 'settings':              return renderSettings();
-    case 'reports':               return renderReports();
-    case 'audit':                 return renderAudit();
-    case 'blackout-dates':        return renderBlackoutDates();
-    case 'pdp':                   return renderPDP();
-    case 'announcements-for-employees':
-      html = renderAnnouncementsForEmployees();
-      setTimeout(() => loadEmployeeAnnouncements(), 100);
-      return html;
-    case 'training-management':   return renderTrainingManagement();
-    case 'training-catalog':      return renderTrainingCatalog();
-    case 'training-approvals':    return renderTrainingApprovals();
+    case 'dashboard':                   return renderDashboard();
+    case 'attendance':                  return renderAttendance();
+    case 'leave':                       return renderLeave();
+    case 'team':                        return renderTeam();
+    case 'approvals':                   return renderApprovals();
+    case 'employees':                   return renderEmployees();
+    case 'branches':                    return renderBranches();
+    case 'settings':                    return renderSettings();
+    case 'reports':                     return renderReports();
+    case 'audit':                       return renderAudit();
+    case 'blackout-dates':              return renderBlackoutDates();
+    case 'pdp':                         return renderPDP();
+    case 'announcements-for-employees': return renderAnnouncementsForEmployees();
+    case 'training-management':         return renderTrainingManagement();
+    case 'training-catalog':            return renderTrainingCatalog();
+    case 'training-approvals':          return renderTrainingApprovals();
     case 'deletion-requests': {
       if (!pdpState.deletionRequests.length) {
         await loadDeletionRequests();
