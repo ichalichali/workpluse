@@ -352,7 +352,7 @@ function renderShell() {
             <p style="padding: 1rem; color: var(--text-s); text-align: center;">Loading...</p>
           </div>
           <div class="dropdown-footer">
-           <button class="btn btn-secondary" onclick="navigate('announcements-for-employees')" style="width: 100%; margin-top: 10px;">View All Announcements</button>
+ 
           </div>
         </div>
       </div>
@@ -397,12 +397,7 @@ async function loadPage() {
     case 'audit':                       return renderAudit();
     case 'blackout-dates':              return renderBlackoutDates();
     case 'pdp':                         return renderPDP();
-    case 'announcements-for-employees': {
-      const html = renderAnnouncementsForEmployees();
-      document.getElementById('page-content').innerHTML = html;
-      setTimeout(() => loadEmployeeAnnouncements(), 100);
-      return;
-    }
+
     case 'training-management':         return renderTrainingManagement();
     case 'training-catalog':            return renderTrainingCatalog();
     case 'training-approvals':          return renderTrainingApprovals();
@@ -4742,80 +4737,9 @@ document.addEventListener('click', (e) => {
   }
 });
 
-function renderAnnouncementsForEmployees() {
-    return `
-        <div class="page-header">
-            <h1>📢 Announcements</h1>
-            <p>All company announcements and updates</p>
-        </div>
-        
-        <div class="announcement-filters" style="margin-bottom: 20px; display: flex; gap: 10px;">
-            <select id="ann-filter" onchange="filterEmployeeAnnouncements()" style="padding: 8px; border-radius: 4px; border: 1px solid var(--border-color);">
-                <option value="all">All Announcements</option>
-                <option value="active">Active Only</option>
-                <option value="expired">Expired Only</option>
-            </select>
-        </div>
-        
-        <div id="announcements-list-container" style="display: grid; gap: 15px;">
-            <p style="text-align: center; color: var(--text-secondary);">Loading announcements...</p>
-        </div>
-    `;
-}
 
-async function loadEmployeeAnnouncements() {
-  try {
-    const r = await api('GET', '/announcements/all-for-employee');
-    
-    // Wait for DOM to be ready with double safety
-    setTimeout(() => {
-      const container = document.getElementById('announcements-list-container');
-      
-      if (!container) {
-        console.error('Container not found!');
-        return;
-      }
-      
-      if (!r.ok) {
-        container.innerHTML = '<p style="color: red;">Failed to load announcements</p>';
-        return;
-      }
-      
-      let announcements = r.data || [];
-      if (announcements.length === 0) {
-        container.innerHTML = '<p style="text-align: center; color: var(--text-s);">No announcements at this time</p>';
-        return;
-      }
-      
-      const html = announcements.map(a => `
-        <div class="announcement-card" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; background: var(--surface); ${a.is_expired ? 'opacity: 0.7;' : ''}">
-          <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
-            <div style="display: flex; gap: 10px;">
-              <span style="background: ${getPriorityColor(a.priority)}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">
-                ${getPriorityEmoji(a.priority)} ${a.priority.toUpperCase()}
-              </span>
-              ${a.is_expired ? '<span style="background: var(--text-secondary); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">⏰ Expired</span>' : ''}
-            </div>
-            <span style="font-size: 12px; color: var(--text-secondary);">Expires: ${new Date(a.expires_at).toLocaleDateString()}</span>
-          </div>
-          <h3 style="margin: 0 0 12px 0;">${escapeHtml(a.title)}</h3>
-          <p style="margin: 12px 0; line-height: 1.5; color: var(--text-secondary);">${escapeHtml(a.body)}</p>
-          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 12px;">
-            ${new Date(a.created_at).toLocaleString()}
-          </div>
-        </div>
-      `).join('');
-      container.innerHTML = html;
-    }, 150);
-    
-  } catch (e) {
-    console.error('Error loading announcements:', e);
-    const container = document.getElementById('announcements-list-container');
-    if (container) {
-      container.innerHTML = '<p style="color: red;">Error loading announcements</p>';
-    }
-  }
-}
+
+
 
 function displayEmployeeAnnouncements(announcements) {
     const container = document.getElementById('announcements-list-container');
