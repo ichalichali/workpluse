@@ -2819,15 +2819,13 @@ def create_announcement():
 def list_announcements():
     """HR Admin lists all announcements (active, archived, or all)"""
     if session.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
-    
-    status = request.args.get('status', 'active')  # active | archived | all
+    status = request.args.get('status', 'active')
     conn = get_db()
     c = conn.cursor()
-    
     try:
         if status == 'active':
             c.execute("""
-                SELECT id, title, body, priority, created_by, audience_type, 
+                SELECT id, title, body, priority, created_by, audience_type,
                        audience_dept_id, created_at, expires_at
                 FROM announcements
                 WHERE is_archived = FALSE
@@ -2835,57 +2833,48 @@ def list_announcements():
             """)
         elif status == 'archived':
             c.execute("""
-                SELECT id, title, body, priority, created_by, audience_type, 
-                       audience_dept_id, created_at, expires_at
+                SELECT id, title, body, priority, created_by, audience_type,
+                       audience_dept_id, created_at, expires_at, archived_at
                 FROM announcements
                 WHERE is_archived = TRUE
                 ORDER BY archived_at DESC
             """)
-        else:  # all
+        else:
             c.execute("""
-                SELECT id, title, body, priority, created_by, audience_type, 
+                SELECT id, title, body, priority, created_by, audience_type,
                        audience_dept_id, created_at, expires_at
                 FROM announcements
                 ORDER BY created_at DESC
             """)
-        
         rows = c.fetchall()
         result = []
-        
         for row in rows:
-            # Get creator name
-            c.execute("SELECT first_name, last_name FROM users WHERE id = %s", (row[4],))
+            c.execute("SELECT first_name, last_name FROM users WHERE id = %s", (row['created_by'],))
             creator = c.fetchone()
-            creator_name = f"{creator[0]} {creator[1]}" if creator else "Unknown"
-            
-            # Get audience dept name if applicable
+            creator_name = f"{creator['first_name']} {creator['last_name']}" if creator else "Unknown"
             dept_name = None
-            if row[5] == 'department' and row[6]:
-                c.execute("SELECT name FROM branches WHERE id = %s", (row[6],))
+            if row['audience_type'] == 'department' and row['audience_dept_id']:
+                c.execute("SELECT name FROM branches WHERE id = %s", (row['audience_dept_id'],))
                 dept = c.fetchone()
-                dept_name = dept[0] if dept else None
-            
+                dept_name = dept['name'] if dept else None
             result.append({
-                'id': row[0],
-                'title': row[1],
-                'body': row[2],
-                'priority': row[3],
-                'created_by': row[4],
+                'id': row['id'],
+                'title': row['title'],
+                'body': row['body'],
+                'priority': row['priority'],
+                'created_by': row['created_by'],
                 'creator_name': creator_name,
-                'audience_type': row[5],
+                'audience_type': row['audience_type'],
                 'audience_dept_name': dept_name,
-                'created_at': row[7].isoformat() if row[7] else None,
-                'expires_at': row[8].isoformat() if row[8] else None,
+                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                'expires_at': row['expires_at'].isoformat() if row['expires_at'] else None,
             })
-        
         conn.close()
         return jsonify(result)
-    
     except Exception as e:
         conn.close()
         return {'error': str(e)}, 400
-
-
+    
 @app.route('/api/announcements/my-announcements', methods=['GET'])
 def get_my_announcements():
     """Get announcements targeted at current user"""
