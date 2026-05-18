@@ -328,7 +328,6 @@ function renderShell() {
           <span class="nav-icon">📢</span> Announcements
         </button>
       </div>` : ''}
-      </div>` : ''}
       <div class="sidebar-footer">
         <div class="user-card">
           <div class="user-avatar">${initials}</div>
