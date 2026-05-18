@@ -4676,7 +4676,7 @@ async function loadAnnouncementsDropdown() {
   if (state.user.role === 'hr_admin') return; // HR sees manage page instead
   
   try {
-    const r = await api('GET', '/announcements/my-announcements');
+    const r = await api('GET', '/announcements/all-for-employee');
     if (!r.ok) return;
     
     const announcements = (r.data || []).slice(0, 5); // Get 5 latest
