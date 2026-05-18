@@ -397,7 +397,12 @@ async function loadPage() {
     case 'audit':                       return renderAudit();
     case 'blackout-dates':              return renderBlackoutDates();
     case 'pdp':                         return renderPDP();
-    case 'announcements-for-employees': return renderAnnouncementsForEmployees();
+    case 'announcements-for-employees': {
+      const html = renderAnnouncementsForEmployees();
+      document.getElementById('page-content').innerHTML = html;
+      setTimeout(() => loadEmployeeAnnouncements(), 100);
+      return;
+    }
     case 'training-management':         return renderTrainingManagement();
     case 'training-catalog':            return renderTrainingCatalog();
     case 'training-approvals':          return renderTrainingApprovals();
@@ -408,7 +413,6 @@ async function loadPage() {
       return renderDeletionRequests();
     }
     case 'announcements':         return renderAnnouncements();
-    case 'announcements-for-employees': return renderAnnouncementsForEmployees();
   }
 }
 
@@ -4762,37 +4766,54 @@ function renderAnnouncementsForEmployees() {
 async function loadEmployeeAnnouncements() {
   try {
     const r = await api('GET', '/announcements/all-for-employee');
-    if (!r.ok) {
-      document.getElementById('announcements-list-container').innerHTML = '<p style="color: red;">Failed to load announcements</p>';
-      return;
-    }
-    let announcements = r.data || [];
-    if (announcements.length === 0) {
-      document.getElementById('announcements-list-container').innerHTML = '<p style="text-align: center; color: var(--text-s);">No announcements at this time</p>';
-      return;
-    }
-    const html = announcements.map(a => `
-      <div class="announcement-card" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; background: var(--surface); ${a.is_expired ? 'opacity: 0.7;' : ''}">
-        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
-          <div style="display: flex; gap: 10px;">
-            <span style="background: ${getPriorityColor(a.priority)}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">
-              ${getPriorityEmoji(a.priority)} ${a.priority.toUpperCase()}
-            </span>
-            ${a.is_expired ? '<span style="background: var(--text-secondary); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">⏰ Expired</span>' : ''}
+    
+    // Wait for DOM to be ready with double safety
+    setTimeout(() => {
+      const container = document.getElementById('announcements-list-container');
+      
+      if (!container) {
+        console.error('Container not found!');
+        return;
+      }
+      
+      if (!r.ok) {
+        container.innerHTML = '<p style="color: red;">Failed to load announcements</p>';
+        return;
+      }
+      
+      let announcements = r.data || [];
+      if (announcements.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: var(--text-s);">No announcements at this time</p>';
+        return;
+      }
+      
+      const html = announcements.map(a => `
+        <div class="announcement-card" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; background: var(--surface); ${a.is_expired ? 'opacity: 0.7;' : ''}">
+          <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+            <div style="display: flex; gap: 10px;">
+              <span style="background: ${getPriorityColor(a.priority)}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">
+                ${getPriorityEmoji(a.priority)} ${a.priority.toUpperCase()}
+              </span>
+              ${a.is_expired ? '<span style="background: var(--text-secondary); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">⏰ Expired</span>' : ''}
+            </div>
+            <span style="font-size: 12px; color: var(--text-secondary);">Expires: ${new Date(a.expires_at).toLocaleDateString()}</span>
           </div>
-          <span style="font-size: 12px; color: var(--text-secondary);">Expires: ${new Date(a.expires_at).toLocaleDateString()}</span>
+          <h3 style="margin: 0 0 12px 0;">${escapeHtml(a.title)}</h3>
+          <p style="margin: 12px 0; line-height: 1.5; color: var(--text-secondary);">${escapeHtml(a.body)}</p>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-top: 12px;">
+            ${new Date(a.created_at).toLocaleString()}
+          </div>
         </div>
-        <h3 style="margin: 0 0 12px 0;">${escapeHtml(a.title)}</h3>
-        <p style="margin: 12px 0; line-height: 1.5; color: var(--text-secondary);">${escapeHtml(a.body)}</p>
-        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 12px;">
-          ${new Date(a.created_at).toLocaleString()}
-        </div>
-      </div>
-    `).join('');
-    document.getElementById('announcements-list-container').innerHTML = html;
+      `).join('');
+      container.innerHTML = html;
+    }, 150);
+    
   } catch (e) {
     console.error('Error loading announcements:', e);
-    document.getElementById('announcements-list-container').innerHTML = '<p style="color: red;">Error loading announcements</p>';
+    const container = document.getElementById('announcements-list-container');
+    if (container) {
+      container.innerHTML = '<p style="color: red;">Error loading announcements</p>';
+    }
   }
 }
 
