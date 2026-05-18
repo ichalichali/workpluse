@@ -2932,7 +2932,6 @@ def get_my_announcements():
                     'priority': ann['priority'],
                     'created_at': ann['created_at'].isoformat() if ann['created_at'] else None,
                     'expires_at': ann['expires_at'].isoformat() if ann['expires_at'] else None,
-                    'creator_name': ann.get('creator_name', 'Unknown'),
                 })
         conn.close()
         return jsonify(result)
