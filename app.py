@@ -654,6 +654,41 @@ def init_db():
         sys.stderr.write(f"[init_db] R12 FAILED: {e}\n")
         sys.stderr.flush()
 
+    # Release 10 · Announcements
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS announcements (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                priority TEXT DEFAULT 'normal',
+                created_by INTEGER NOT NULL REFERENCES users(id),
+                audience_type TEXT NOT NULL,
+                audience_dept_id INTEGER REFERENCES branches(id),
+                audience_group_ids_json TEXT,
+                audience_user_ids_json TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                published_at TIMESTAMP WITH TIME ZONE,
+                expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                is_archived BOOLEAN DEFAULT FALSE,
+                archived_at TIMESTAMP WITH TIME ZONE
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_announcements_created ON announcements(created_at DESC);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_announcements_expires ON announcements(expires_at);")
+        cur.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R10_announcements', 'Announcements - HR broadcasts with priority and audience targeting')
+            ON CONFLICT DO NOTHING;
+        """)
+        conn.commit()
+        sys.stderr.write("[init_db] R10 Announcements applied\n")
+        sys.stderr.flush()
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R10 FAILED: {e}\n")
+        sys.stderr.flush()
+
     conn.commit(); conn.close()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -3880,3 +3915,226 @@ def report_team_attendance():
     depts = [r['department'] for r in c.fetchall()]
     conn.close()
     return jsonify({'attendance':[dict(r) for r in att_rows],'leaves':[dict(r) for r in leave_rows],'departments':depts})
+
+# ════════════════════════════════════════════════════════════════════════════
+# R10: ANNOUNCEMENTS - API ENDPOINTS
+# ════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/announcements/create', methods=['POST'])
+def create_announcement():
+    if session.get('role') != 'hr_admin':
+        return {'error': 'HR Admin access only'}, 403
+    
+    data = request.get_json()
+    title = data.get('title', '').strip()
+    body = data.get('body', '').strip()
+    priority = data.get('priority', 'normal')
+    audience_type = data.get('audience_type', 'all')
+    expires_at = data.get('expires_at')
+    is_archived = data.get('is_archived', False)
+    
+    if not title or not body or not expires_at:
+        return {'error': 'Missing required fields'}, 400
+    
+    audience_dept_id = data.get('audience_dept_id')
+    audience_group_ids = data.get('audience_group_ids')
+    audience_user_ids = data.get('audience_user_ids')
+    
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO announcements 
+            (title, body, priority, created_by, audience_type, audience_dept_id, 
+             audience_group_ids_json, audience_user_ids_json, expires_at, is_archived)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id;
+        """, (title, body, priority, session['user_id'], audience_type, 
+              audience_dept_id, 
+              json.dumps(audience_group_ids) if audience_group_ids else None,
+              json.dumps(audience_user_ids) if audience_user_ids else None,
+              expires_at, is_archived))
+        
+        ann_id = cur.fetchone()['id']
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'ok': True, 'id': ann_id})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/announcements/list', methods=['GET'])
+def list_announcements():
+    if session.get('role') != 'hr_admin':
+        return {'error': 'HR Admin access only'}, 403
+    
+    status = request.args.get('status', 'active')
+    
+    conn = get_db()
+    cur = conn.cursor()
+    
+    if status == 'active':
+        cur.execute("""
+            SELECT a.*, u.name as creator_name, b.name as audience_dept_name
+            FROM announcements a
+            LEFT JOIN users u ON a.created_by = u.id
+            LEFT JOIN branches b ON a.audience_dept_id = b.id
+            WHERE a.is_archived = FALSE AND a.expires_at > NOW()
+            ORDER BY a.created_at DESC;
+        """)
+    elif status == 'archived':
+        cur.execute("""
+            SELECT a.*, u.name as creator_name, b.name as audience_dept_name
+            FROM announcements a
+            LEFT JOIN users u ON a.created_by = u.id
+            LEFT JOIN branches b ON a.audience_dept_id = b.id
+            WHERE a.is_archived = TRUE
+            ORDER BY a.archived_at DESC;
+        """)
+    else:
+        cur.execute("""
+            SELECT a.*, u.name as creator_name, b.name as audience_dept_name
+            FROM announcements a
+            LEFT JOIN users u ON a.created_by = u.id
+            LEFT JOIN branches b ON a.audience_dept_id = b.id
+            ORDER BY a.created_at DESC;
+        """)
+    
+    rows = cur.fetchall()
+    conn.close()
+    
+    result = []
+    for row in rows:
+        result.append({
+            'id': row['id'],
+            'title': row['title'],
+            'body': row['body'],
+            'priority': row['priority'],
+            'audience_type': row['audience_type'],
+            'audience_dept_name': row['audience_dept_name'],
+            'creator_name': row['creator_name'],
+            'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+            'expires_at': row['expires_at'].isoformat() if row['expires_at'] else None,
+            'is_archived': row['is_archived'],
+        })
+    
+    return jsonify(result)
+
+@app.route('/api/announcements/<int:ann_id>', methods=['PUT'])
+def update_announcement(ann_id):
+    if session.get('role') != 'hr_admin':
+        return {'error': 'HR Admin access only'}, 403
+    
+    data = request.get_json()
+    title = data.get('title', '').strip()
+    body = data.get('body', '').strip()
+    priority = data.get('priority', 'normal')
+    audience_type = data.get('audience_type', 'all')
+    expires_at = data.get('expires_at')
+    is_archived = data.get('is_archived', False)
+    
+    if not title or not body or not expires_at:
+        return {'error': 'Missing required fields'}, 400
+    
+    audience_dept_id = data.get('audience_dept_id')
+    audience_group_ids = data.get('audience_group_ids')
+    audience_user_ids = data.get('audience_user_ids')
+    
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            UPDATE announcements
+            SET title=%s, body=%s, priority=%s, audience_type=%s, 
+                audience_dept_id=%s, audience_group_ids_json=%s, 
+                audience_user_ids_json=%s, expires_at=%s, is_archived=%s,
+                archived_at = CASE WHEN %s = TRUE THEN NOW() ELSE archived_at END
+            WHERE id=%s;
+        """, (title, body, priority, audience_type, audience_dept_id,
+              json.dumps(audience_group_ids) if audience_group_ids else None,
+              json.dumps(audience_user_ids) if audience_user_ids else None,
+              expires_at, is_archived, is_archived, ann_id))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/announcements/<int:ann_id>', methods=['DELETE'])
+def delete_announcement(ann_id):
+    if session.get('role') != 'hr_admin':
+        return {'error': 'HR Admin access only'}, 403
+    
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            UPDATE announcements
+            SET is_archived = TRUE, archived_at = NOW()
+            WHERE id = %s;
+        """, (ann_id,))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {'error': str(e)}, 400
+
+@app.route('/api/announcements/my-announcements', methods=['GET'])
+def get_my_announcements():
+    """Get announcements visible to current user based on their audience."""
+    user_id = session.get('user_id')
+    if not user_id:
+        return {'error': 'Unauthorized'}, 401
+    
+    conn = get_db()
+    cur = conn.cursor()
+    
+    # Get user's department
+    cur.execute("SELECT department FROM users WHERE id=%s", (user_id,))
+    user_row = cur.fetchone()
+    user_dept = user_row['department'] if user_row else None
+    
+    # Get announcements for this user
+    cur.execute("""
+        SELECT a.*, u.name as creator_name
+        FROM announcements a
+        LEFT JOIN users u ON a.created_by = u.id
+        WHERE a.is_archived = FALSE 
+        AND a.expires_at > NOW()
+        AND (
+            a.audience_type = 'all'
+            OR (a.audience_type = 'department' AND %s::TEXT = ANY(string_to_array(a.audience_group_ids_json, ',')))
+            OR (a.audience_type = 'group' AND %s::TEXT = ANY(string_to_array(COALESCE(a.audience_group_ids_json, ''), ',')))
+            OR (a.audience_type = 'individual' AND %s::TEXT = ANY(string_to_array(COALESCE(a.audience_user_ids_json, ''), ',')))
+        )
+        ORDER BY a.created_at DESC;
+    """, (user_dept, str(user_id), str(user_id)))
+    
+    rows = cur.fetchall()
+    conn.close()
+    
+    result = []
+    for row in rows:
+        result.append({
+            'id': row['id'],
+            'title': row['title'],
+            'body': row['body'],
+            'priority': row['priority'],
+            'creator_name': row['creator_name'],
+            'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+            'expires_at': row['expires_at'].isoformat() if row['expires_at'] else None,
+        })
+    
+    return jsonify(result)
+
+# ════════════════════════════════════════════════════════════════════════════
+# END R10: ANNOUNCEMENTS
+# ════════════════════════════════════════════════════════════════════════════
