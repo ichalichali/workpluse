@@ -339,7 +339,25 @@ function renderShell() {
         </div>
       </div>
     </aside>
-    <main class="main-content" id="page-content"></main>
+    <main class="main-content">
+      <div class="navbar-header">
+        <div class="navbar-spacer"></div>
+        <button class="navbar-bell" onclick="toggleAnnouncementsDropdown()" title="Announcements">
+          🔔
+          <span id="announcement-badge" class="badge" style="display:none;">0</span>
+        </button>
+        <div id="announcements-dropdown" class="announcements-dropdown" style="display:none;">
+          <div class="dropdown-header">Latest Announcements</div>
+          <div id="announcements-list-dropdown" style="max-height: 400px; overflow-y: auto;">
+            <p style="padding: 1rem; color: var(--text-s); text-align: center;">Loading...</p>
+          </div>
+          <div class="dropdown-footer">
+            <button class="btn btn-sm" onclick="navigate('announcements-for-employees')">View All</button>
+          </div>
+        </div>
+      </div>
+      <div id="page-content"></div>
+    </main>
   </div>`;
 
   loadPage();
@@ -365,6 +383,7 @@ async function doLogout() {
 
 // ── Page Dispatcher ───────────────────────────────────────────────────────────
 async function loadPage() {
+  initAnnouncements(); // Load announcements dropdown
   switch(state.page) {
     case 'dashboard':             return renderDashboard();
     case 'attendance':            return renderAttendance();
@@ -388,6 +407,7 @@ async function loadPage() {
       return renderDeletionRequests();
     }
     case 'announcements':         return renderAnnouncements();
+    case 'announcements-for-employees': return renderAnnouncementsForEmployees();
   }
 }
 
@@ -4644,4 +4664,350 @@ function escapeHtml(text) {
 
 // ════════════════════════════════════════════════════════════════════════════
 // END R10: ANNOUNCEMENTS
+// ════════════════════════════════════════════════════════════════════════════
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// R10: ANNOUNCEMENTS DISPLAY FOR EMPLOYEES
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadAnnouncementsDropdown() {
+  if (state.user.role === 'hr_admin') return; // HR sees manage page instead
+  
+  try {
+    const r = await api('GET', '/announcements/my-announcements');
+    if (!r.ok) return;
+    
+    const announcements = (r.data || []).slice(0, 5); // Get 5 latest
+    const unreadCount = announcements.length;
+    
+    // Update badge
+    const badge = document.getElementById('announcement-badge');
+    if (unreadCount > 0) {
+      badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+    
+    // Update dropdown list
+    const dropdownList = document.getElementById('announcements-list-dropdown');
+    if (announcements.length === 0) {
+      dropdownList.innerHTML = '<p style="padding: 1rem; color: var(--text-s); text-align: center;">No announcements</p>';
+      return;
+    }
+    
+    const html = announcements.map(a => `
+      <div class="announcement-item">
+        <div class="announcement-header">
+          <span class="priority-badge" style="background: ${getPriorityColor(a.priority)};">
+            ${getPriorityEmoji(a.priority)}
+          </span>
+          <strong style="flex: 1;">${escapeHtml(a.title)}</strong>
+          <span class="text-xs text-muted">${new Date(a.expires_at).toLocaleDateString()}</span>
+        </div>
+        <div class="announcement-body text-sm">${escapeHtml(a.body.substring(0, 80))}...</div>
+      </div>
+    `).join('');
+    
+    dropdownList.innerHTML = html;
+  } catch (e) {
+    console.error('Error loading announcements:', e);
+  }
+}
+
+function toggleAnnouncementsDropdown() {
+  const dropdown = document.getElementById('announcements-dropdown');
+  const isOpen = dropdown.style.display !== 'none';
+  
+  if (isOpen) {
+    dropdown.style.display = 'none';
+  } else {
+    dropdown.style.display = 'block';
+    loadAnnouncementsDropdown();
+  }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const bell = document.querySelector('.navbar-bell');
+  const dropdown = document.getElementById('announcements-dropdown');
+  if (!bell?.contains(e.target) && !dropdown?.contains(e.target)) {
+    if (dropdown) dropdown.style.display = 'none';
+  }
+});
+
+async function renderAnnouncementsForEmployees() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header">
+      <h1>📢 Announcements</h1>
+      <p class="text-s text-muted">Stay informed with important updates</p>
+    </div>
+    
+    <div class="filters mb-4">
+      <select id="ann-priority-filter" class="btn" onchange="loadEmployeeAnnouncements()">
+        <option value="">All Priorities</option>
+        <option value="critical">🔴 Critical</option>
+        <option value="urgent">🟠 Urgent</option>
+        <option value="normal">🟡 Normal</option>
+        <option value="info">🟢 Info</option>
+      </select>
+    </div>
+    
+    <div id="announcements-content">
+      <p style="text-align: center; color: var(--text-s);">Loading announcements...</p>
+    </div>
+  `;
+  
+  await loadEmployeeAnnouncements();
+}
+
+async function loadEmployeeAnnouncements() {
+  try {
+    const r = await api('GET', '/announcements/my-announcements');
+    if (!r.ok) {
+      document.getElementById('announcements-content').innerHTML = '<p style="color: red;">Failed to load announcements</p>';
+      return;
+    }
+    
+    let announcements = r.data || [];
+    
+    // Filter by priority if selected
+    const priorityFilter = document.getElementById('ann-priority-filter')?.value;
+    if (priorityFilter) {
+      announcements = announcements.filter(a => a.priority === priorityFilter);
+    }
+    
+    if (announcements.length === 0) {
+      document.getElementById('announcements-content').innerHTML = '<p style="text-align: center; color: var(--text-s);">No announcements at this time</p>';
+      return;
+    }
+    
+    const html = announcements.map(a => `
+      <div class="announcement-card">
+        <div class="announcement-card-header">
+          <div>
+            <span class="priority-label" style="background: ${getPriorityColor(a.priority)}; color: white; padding: 0.25rem 0.75rem; border-radius: 0.25rem; font-size: 0.875rem; font-weight: 600;">
+              ${getPriorityEmoji(a.priority)} ${a.priority.toUpperCase()}
+            </span>
+          </div>
+          <span class="text-xs text-muted">Expires: ${new Date(a.expires_at).toLocaleDateString()}</span>
+        </div>
+        <h3 style="margin: 0.75rem 0 0.5rem 0;">${escapeHtml(a.title)}</h3>
+        <p style="margin: 0.5rem 0; line-height: 1.5; color: var(--text-s);">${escapeHtml(a.body)}</p>
+        <div class="text-xs text-muted" style="margin-top: 0.75rem;">
+          From: <strong>${escapeHtml(a.creator_name)}</strong> · ${new Date(a.created_at).toLocaleString()}
+        </div>
+      </div>
+    `).join('');
+    
+    document.getElementById('announcements-content').innerHTML = html;
+  } catch (e) {
+    console.error('Error loading announcements:', e);
+    document.getElementById('announcements-content').innerHTML = '<p style="color: red;">Error loading announcements</p>';
+  }
+}
+
+function getPriorityEmoji(priority) {
+  const map = {
+    'critical': '🔴',
+    'urgent': '🟠',
+    'normal': '🟡',
+    'info': '🟢'
+  };
+  return map[priority] || '🟡';
+}
+
+function getPriorityColor(priority) {
+  const map = {
+    'critical': '#ef4444',
+    'urgent': '#f97316',
+    'normal': '#eab308',
+    'info': '#22c55e'
+  };
+  return map[priority] || '#eab308';
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  };
+  return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CSS STYLES FOR ANNOUNCEMENTS
+// ════════════════════════════════════════════════════════════════════════════
+
+const announcementsStyles = `
+.navbar-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid var(--surface-s);
+  gap: 1rem;
+  position: relative;
+}
+
+.navbar-spacer {
+  flex: 1;
+}
+
+.navbar-bell {
+  position: relative;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  transition: transform 0.2s;
+}
+
+.navbar-bell:hover {
+  transform: scale(1.1);
+}
+
+.badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: #ef4444;
+  color: white;
+  border-radius: 50%;
+  width: 1.25rem;
+  height: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.announcements-dropdown {
+  position: absolute;
+  top: 3.5rem;
+  right: 1rem;
+  background: white;
+  border: 1px solid var(--surface-s);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 350px;
+  z-index: 1000;
+}
+
+.dropdown-header {
+  padding: 1rem;
+  border-bottom: 1px solid var(--surface-s);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.announcement-item {
+  padding: 1rem;
+  border-bottom: 1px solid var(--surface-s);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.announcement-item:hover {
+  background: var(--surface-s);
+}
+
+.announcement-item:last-child {
+  border-bottom: none;
+}
+
+.announcement-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.priority-badge {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.announcement-body {
+  color: var(--text-s);
+}
+
+.dropdown-footer {
+  padding: 1rem;
+  border-top: 1px solid var(--surface-s);
+  text-align: center;
+}
+
+.announcement-card {
+  background: white;
+  border: 1px solid var(--surface-s);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.announcement-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.announcement-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.filters {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.text-xs {
+  font-size: 0.75rem;
+}
+
+.text-sm {
+  font-size: 0.875rem;
+}
+
+.text-muted {
+  color: var(--text-s);
+}
+
+.mb-4 {
+  margin-bottom: 1rem;
+}
+`;
+
+// Inject styles
+if (!document.getElementById('announcements-styles')) {
+  const style = document.createElement('style');
+  style.id = 'announcements-styles';
+  style.textContent = announcementsStyles;
+  document.head.appendChild(style);
+}
+
+// Initialize announcements on page load
+function initAnnouncements() {
+  if (state.user && state.user.role !== 'hr_admin') {
+    loadAnnouncementsDropdown();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// END R10: ANNOUNCEMENTS DISPLAY FOR EMPLOYEES
 // ════════════════════════════════════════════════════════════════════════════
