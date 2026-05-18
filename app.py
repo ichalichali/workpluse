@@ -2793,7 +2793,10 @@ def create_announcement():
             data.get('expires_at')
         ))
         
-        announcement_id = c.fetchone()[0]
+        row = c.fetchone()
+        announcement_id = row['id'] if row else None
+        if not announcement_id:
+            raise Exception("Failed to create announcement")
         
         # Audit log
         c.execute("""
