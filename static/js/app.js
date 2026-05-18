@@ -4761,14 +4761,13 @@ function renderAnnouncementsForEmployees() {
 
 async function loadEmployeeAnnouncements() {
     try {
-        const resp = await api('GET', '/announcements/all-for-employee');
-        if (!resp || resp.error) {
-            showToast('error', 'Failed to load announcements');
-            return;
+       const r = await api('GET', '/announcements/all-for-employee');  // ← CHANGED
+    if (!r.ok) {
+      document.getElementById('announcements-list-container').innerHTML = '<p style="color: red;">Failed to load announcements</p>';  // ← CHANGED
+      return;
         }
-        
-        window.allAnnouncementsData = resp; // Store for filtering
-        displayEmployeeAnnouncements(resp);
+        window.allAnnouncementsData = r.data; // Store for filtering
+        displayEmployeeAnnouncements(r.data);
     } catch (e) {
         console.error('Error loading announcements:', e);
         showToast('error', 'Error loading announcements');
