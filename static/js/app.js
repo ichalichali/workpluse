@@ -4863,7 +4863,7 @@ function filterEmployeeAnnouncements() {
         displayEmployeeAnnouncements(window.allAnnouncementsData);
     }
 }
-}
+
 
 function getPriorityEmoji(priority) {
   const map = {
