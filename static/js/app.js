@@ -346,25 +346,16 @@ function renderShell() {
           🔔
           <span id="announcement-badge" class="badge" style="
             position: absolute;
-            top: -8px;
-            right: -8px;
-            background: linear-gradient(135deg, #ff4757, #ff6348);
-            color: white;
+            top: -4px;
+            right: -4px;
+            background: #ff4757;
             border-radius: 50%;
-            width: 24px;
-            height: 24px;
+            width: 12px;
+            height: 12px;
             display: none;
-            align-items: center;
-            justify-content: center;
-            font-size: 11px;
-            font-weight: 700;
-            box-shadow: 0 2px 8px rgba(255, 71, 87, 0.4);
+            box-shadow: 0 2px 6px rgba(255, 71, 87, 0.5);
             border: 2px solid white;
-            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            line-height: 1;
-            min-width: 24px;
-            min-height: 24px;
-          ">0</span>
+          "></span>
         </button>
         <div id="announcements-dropdown" class="announcements-dropdown" style="display:none;">
           <div class="dropdown-header">Latest Announcements</div>
@@ -4897,27 +4888,21 @@ const announcementsStyles = `
 
 .badge {
   position: absolute;
-  top: -8px;
-  right: -8px;
-  background: linear-gradient(135deg, #ff4757, #ff6348);
-  color: white;
+  top: -4px;
+  right: -4px;
+  background: #ff4757;
   border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  box-shadow: 0 2px 8px rgba(255, 71, 87, 0.4), inset 0 1px 2px rgba(255,255,255,0.3);
+  width: 12px;
+  height: 12px;
+  display: none;
+  box-shadow: 0 2px 6px rgba(255, 71, 87, 0.5);
   border: 2px solid white;
-  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   animation: badgePulse 2s ease-in-out infinite;
 }
 
 @keyframes badgePulse {
   0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.08); }
+  50% { transform: scale(1.15); }
 }
 
 .announcements-dropdown {
