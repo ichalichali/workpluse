@@ -2783,12 +2783,10 @@ def review_deletion():
             ON CONFLICT DO NOTHING;
         """)
         conn.commit()
-        sys.stderr.write("[init_db] R11 Business Trips applied\n")
-        sys.stderr.flush()
+        print("[init_db] R11 Business Trips applied")
     except Exception as e:
         conn.rollback()
-        sys.stderr.write(f"[init_db] R11 FAILED: {e}\n")
-        sys.stderr.flush()
+        print(f"[init_db] R11 FAILED: {e}")
 
     conn.commit(); conn.close()
     return jsonify({'ok': True})
@@ -3931,8 +3929,14 @@ def create_trip_attendance(user_id, start_date, end_date):
     """Auto-create attendance records for approved business trip dates."""
     conn = get_db(); c = conn.cursor()
     try:
-        current = datetime.strptime(start_date, '%Y-%m-%d').date()
-        end = datetime.strptime(end_date, '%Y-%m-%d').date()
+        if isinstance(start_date, str):
+            current = datetime.strptime(start_date, '%Y-%m-%d').date()
+        else:
+            current = start_date
+        if isinstance(end_date, str):
+            end = datetime.strptime(end_date, '%Y-%m-%d').date()
+        else:
+            end = end_date
         
         while current <= end:
             date_str = current.strftime('%Y-%m-%d')
@@ -3947,20 +3951,26 @@ def create_trip_attendance(user_id, start_date, end_date):
         conn.close()
         return True
     except Exception as e:
+        print(f"[create_trip_attendance ERROR] {e}", file=sys.stderr)
         conn.rollback()
         conn.close()
         return False
 
 def delete_trip_attendance(user_id, start_date, end_date):
-    """Delete attendance records for a business trip (when trip is cancelled/adjusted)."""
+    """Delete attendance records for a business trip."""
     conn = get_db(); c = conn.cursor()
     try:
-        current = datetime.strptime(start_date, '%Y-%m-%d').date()
-        end = datetime.strptime(end_date, '%Y-%m-%d').date()
+        if isinstance(start_date, str):
+            current = datetime.strptime(start_date, '%Y-%m-%d').date()
+        else:
+            current = start_date
+        if isinstance(end_date, str):
+            end = datetime.strptime(end_date, '%Y-%m-%d').date()
+        else:
+            end = end_date
         
         while current <= end:
             date_str = current.strftime('%Y-%m-%d')
-            # Only delete if status is exactly 'business_trip' (don't touch leave overrides)
             c.execute("""
                 DELETE FROM attendance
                 WHERE user_id=%s AND date=%s AND status='business_trip'
@@ -3971,6 +3981,7 @@ def delete_trip_attendance(user_id, start_date, end_date):
         conn.close()
         return True
     except Exception as e:
+        print(f"[delete_trip_attendance ERROR] {e}", file=sys.stderr)
         conn.rollback()
         conn.close()
         return False
@@ -3978,14 +3989,16 @@ def delete_trip_attendance(user_id, start_date, end_date):
 @app.route('/api/business-trips/request', methods=['POST'])
 def request_business_trip():
     """Employee creates a new business trip request."""
-    require_login()
+    err = require_login()
+    if err: return err
+    
     uid = session['user_id']
     role = session['role']
     
     if role != 'employee':
         return jsonify({'error': 'Only employees can request trips'}), 403
     
-    data = request.get_json()
+    data = request.get_json() or {}
     start_date = data.get('start_date')
     end_date = data.get('end_date')
     destination = data.get('destination')
@@ -3996,7 +4009,6 @@ def request_business_trip():
     
     conn = get_db(); c = conn.cursor()
     try:
-        # Get employee's manager
         c.execute("SELECT manager_id FROM users WHERE id=%s", (uid,))
         emp = c.fetchone()
         manager_id = emp['manager_id'] if emp else None
@@ -4008,56 +4020,45 @@ def request_business_trip():
         """, (uid, start_date, end_date, destination, purpose, manager_id, 'pending'))
         
         trip_id = c.fetchone()['id']
-        
-        # Log to audit
-        c.execute("""
-            SELECT name FROM users WHERE id=%s
-        """, (uid,))
-        emp_name = c.fetchone()['name']
-        
         log_audit(c, uid, 'business_trip_request', 'business_trips', trip_id, 
                   after={'destination': destination, 'purpose': purpose, 'dates': f'{start_date} to {end_date}'})
         
         conn.commit()
         conn.close()
-        
-        return jsonify({
-            'id': trip_id,
-            'status': 'pending',
-            'message': 'Trip request submitted for manager approval'
-        })
+        return jsonify({'id': trip_id, 'status': 'pending', 'message': 'Trip request submitted'})
     except Exception as e:
+        print(f"[request_business_trip ERROR] {e}", file=sys.stderr)
         conn.rollback()
         conn.close()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/business-trips/pending', methods=['GET'])
 def get_pending_trips():
     """Manager view: pending trip approvals for their team."""
-    require_login()
+    err = require_login()
+    if err: return err
+    
     uid = session['user_id']
     role = session['role']
     
     if role not in ('manager', 'hr_admin'):
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'Manager or HR access required'}), 403
     
     conn = get_db(); c = conn.cursor()
     try:
         if role == 'manager':
-            # Only their team's trips
             c.execute("""
                 SELECT bt.id, u.name, u.employee_id, bt.start_date, bt.end_date, 
-                       bt.destination, bt.purpose, bt.created_at
+                       bt.destination, bt.purpose, bt.created_at, bt.status
                 FROM business_trips bt
                 JOIN users u ON bt.user_id = u.id
                 WHERE bt.manager_id = %s AND bt.status = 'pending'
                 ORDER BY bt.created_at DESC
             """, (uid,))
         else:
-            # HR sees all pending
             c.execute("""
                 SELECT bt.id, u.name, u.employee_id, bt.start_date, bt.end_date, 
-                       bt.destination, bt.purpose, bt.created_at, m.name as manager_name
+                       bt.destination, bt.purpose, bt.created_at, bt.status, m.name as manager_name
                 FROM business_trips bt
                 JOIN users u ON bt.user_id = u.id
                 LEFT JOIN users m ON bt.manager_id = m.id
@@ -4065,29 +4066,34 @@ def get_pending_trips():
                 ORDER BY bt.created_at DESC
             """)
         
-        trips = [dict(row) for row in c.fetchall()]
+        trips = [dict(r) for r in c.fetchall()]
         conn.close()
         return jsonify(trips)
     except Exception as e:
+        print(f"[get_pending_trips ERROR] {e}", file=sys.stderr)
         conn.close()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/business-trips/approve', methods=['POST'])
 def approve_business_trip():
     """Manager approves a business trip request."""
-    require_login()
+    err = require_login()
+    if err: return err
+    
     uid = session['user_id']
     role = session['role']
     
     if role != 'manager':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'Only managers can approve'}), 403
     
-    data = request.get_json()
+    data = request.get_json() or {}
     trip_id = data.get('id')
+    
+    if not trip_id:
+        return jsonify({'error': 'Trip ID required'}), 400
     
     conn = get_db(); c = conn.cursor()
     try:
-        # Verify trip belongs to this manager
         c.execute("""
             SELECT user_id, start_date, end_date FROM business_trips 
             WHERE id = %s AND manager_id = %s AND status = 'pending'
@@ -4095,13 +4101,13 @@ def approve_business_trip():
         
         trip = c.fetchone()
         if not trip:
+            conn.close()
             return jsonify({'error': 'Trip not found or already processed'}), 404
         
         user_id = trip['user_id']
-        start_date = trip['start_date'].isoformat()
-        end_date = trip['end_date'].isoformat()
+        start_date = trip['start_date']
+        end_date = trip['end_date']
         
-        # Update trip status
         c.execute("""
             UPDATE business_trips
             SET status='approved', approved_by_manager_id=%s, approved_at=NOW()
@@ -4114,32 +4120,33 @@ def approve_business_trip():
         conn.commit()
         conn.close()
         
-        # Create attendance records (outside transaction to avoid blocking)
         create_trip_attendance(user_id, start_date, end_date)
         
-        return jsonify({
-            'id': trip_id,
-            'status': 'approved',
-            'message': f'Trip approved. Attendance marked for {start_date} to {end_date}'
-        })
+        return jsonify({'id': trip_id, 'status': 'approved'})
     except Exception as e:
+        print(f"[approve_business_trip ERROR] {e}", file=sys.stderr)
         conn.rollback()
         conn.close()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/business-trips/reject', methods=['POST'])
 def reject_business_trip():
     """Manager rejects a business trip request."""
-    require_login()
+    err = require_login()
+    if err: return err
+    
     uid = session['user_id']
     role = session['role']
     
     if role != 'manager':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'Only managers can reject'}), 403
     
-    data = request.get_json()
+    data = request.get_json() or {}
     trip_id = data.get('id')
     rejection_reason = data.get('rejection_reason', '')
+    
+    if not trip_id:
+        return jsonify({'error': 'Trip ID required'}), 400
     
     conn = get_db(); c = conn.cursor()
     try:
@@ -4150,6 +4157,7 @@ def reject_business_trip():
         """, (rejection_reason, trip_id, uid))
         
         if c.rowcount == 0:
+            conn.close()
             return jsonify({'error': 'Trip not found or already processed'}), 404
         
         log_audit(c, uid, 'business_trip_reject', 'business_trips', trip_id,
@@ -4157,17 +4165,19 @@ def reject_business_trip():
         
         conn.commit()
         conn.close()
-        
         return jsonify({'id': trip_id, 'status': 'rejected'})
     except Exception as e:
+        print(f"[reject_business_trip ERROR] {e}", file=sys.stderr)
         conn.rollback()
         conn.close()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/business-trips/my-trips', methods=['GET'])
 def my_business_trips():
     """Employee view: their own business trip requests."""
-    require_login()
+    err = require_login()
+    if err: return err
+    
     uid = session['user_id']
     
     conn = get_db(); c = conn.cursor()
@@ -4181,49 +4191,54 @@ def my_business_trips():
             ORDER BY bt.created_at DESC
         """, (uid,))
         
-        trips = [dict(row) for row in c.fetchall()]
+        trips = [dict(r) for r in c.fetchall()]
         conn.close()
         return jsonify(trips)
     except Exception as e:
+        print(f"[my_business_trips ERROR] {e}", file=sys.stderr)
         conn.close()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/business-trips/team', methods=['GET'])
 def team_business_trips():
-    """Manager view: their team's approved business trips."""
-    require_login()
+    """Manager view: their team's business trips."""
+    err = require_login()
+    if err: return err
+    
     uid = session['user_id']
     role = session['role']
     
     if role != 'manager':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'Manager access required'}), 403
     
     conn = get_db(); c = conn.cursor()
     try:
         c.execute("""
             SELECT bt.id, u.name, u.employee_id, bt.start_date, bt.end_date,
-                   bt.destination, bt.purpose, bt.status, bt.approved_at
+                   bt.destination, bt.purpose, bt.status, bt.approved_at, bt.created_at
             FROM business_trips bt
             JOIN users u ON bt.user_id = u.id
             WHERE bt.manager_id = %s
             ORDER BY bt.start_date DESC
         """, (uid,))
         
-        trips = [dict(row) for row in c.fetchall()]
+        trips = [dict(r) for r in c.fetchall()]
         conn.close()
         return jsonify(trips)
     except Exception as e:
+        print(f"[team_business_trips ERROR] {e}", file=sys.stderr)
         conn.close()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/business-trips/all', methods=['GET'])
 def all_business_trips():
     """HR Admin view: all company business trips."""
-    require_login()
-    role = session['role']
+    err = require_login()
+    if err: return err
     
+    role = session['role']
     if role != 'hr_admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'HR access required'}), 403
     
     conn = get_db(); c = conn.cursor()
     try:
@@ -4249,46 +4264,46 @@ def all_business_trips():
                 ORDER BY bt.start_date DESC
             """)
         
-        trips = [dict(row) for row in c.fetchall()]
+        trips = [dict(r) for r in c.fetchall()]
         conn.close()
         return jsonify(trips)
     except Exception as e:
+        print(f"[all_business_trips ERROR] {e}", file=sys.stderr)
         conn.close()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/business-trips/adjust-dates', methods=['POST'])
 def adjust_trip_dates():
-    """HR Admin adjusts business trip dates (if employee extends/returns early)."""
-    require_login()
+    """HR Admin adjusts business trip dates."""
+    err = require_login()
+    if err: return err
+    
     role = session['role']
-    
     if role != 'hr_admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'HR access required'}), 403
     
-    data = request.get_json()
+    data = request.get_json() or {}
     trip_id = data.get('id')
     new_start = data.get('start_date')
     new_end = data.get('end_date')
     
+    if not all([trip_id, new_start, new_end]):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
     conn = get_db(); c = conn.cursor()
     try:
-        # Get old dates and user_id
-        c.execute("""
-            SELECT user_id, start_date, end_date FROM business_trips WHERE id = %s
-        """, (trip_id,))
-        
+        c.execute("SELECT user_id, start_date, end_date FROM business_trips WHERE id = %s", (trip_id,))
         trip = c.fetchone()
         if not trip:
+            conn.close()
             return jsonify({'error': 'Trip not found'}), 404
         
         user_id = trip['user_id']
-        old_start = trip['start_date'].isoformat()
-        old_end = trip['end_date'].isoformat()
+        old_start = trip['start_date']
+        old_end = trip['end_date']
         
-        # Delete old attendance records
         delete_trip_attendance(user_id, old_start, old_end)
         
-        # Update trip
         c.execute("""
             UPDATE business_trips
             SET start_date=%s, end_date=%s, updated_at=NOW()
@@ -4296,25 +4311,20 @@ def adjust_trip_dates():
         """, (new_start, new_end, trip_id))
         
         log_audit(c, session['user_id'], 'business_trip_adjust', 'business_trips', trip_id,
-                  before={'start_date': old_start, 'end_date': old_end},
+                  before={'start_date': str(old_start), 'end_date': str(old_end)},
                   after={'start_date': new_start, 'end_date': new_end})
         
         conn.commit()
         conn.close()
         
-        # Create new attendance records
         create_trip_attendance(user_id, new_start, new_end)
         
-        return jsonify({
-            'id': trip_id,
-            'start_date': new_start,
-            'end_date': new_end,
-            'message': 'Trip dates adjusted. Attendance records updated'
-        })
+        return jsonify({'id': trip_id, 'start_date': new_start, 'end_date': new_end})
     except Exception as e:
+        print(f"[adjust_trip_dates ERROR] {e}", file=sys.stderr)
         conn.rollback()
         conn.close()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/reports/my-attendance')
 def report_my_attendance():
