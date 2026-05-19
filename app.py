@@ -3126,7 +3126,7 @@ def delete_announcement(announcement_id):
 
 @app.route('/api/training/create', methods=['POST'])
 def create_training():
-    if state.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
     data = request.get_json()
     conn = get_db()
     c = conn.cursor()
@@ -3148,7 +3148,7 @@ def create_training():
             data.get('target_department_id'),
             data.get('target_role'),
             data.get('target_user_ids_json'),
-            state['user_id']
+            session['user_id']
         ))
         training_id = c.fetchone()[0]
         
@@ -3156,7 +3156,7 @@ def create_training():
         c.execute("""
             INSERT INTO audit_log (user_id, action, entity_type, entity_id, before_json, after_json, ip_address, user_agent)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (state['user_id'], 'training_create', 'training', training_id, None, json.dumps(data), '', ''))
+        """, (session['user_id'], 'training_create', 'training', training_id, None, json.dumps(data), '', ''))
         
         conn.commit()
         conn.close()
@@ -3168,7 +3168,7 @@ def create_training():
 
 @app.route('/api/training/list', methods=['GET'])
 def list_trainings():
-    if state.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
     conn = get_db()
     c = conn.cursor()
     c.execute("""
@@ -3229,7 +3229,7 @@ def get_training(training_id):
 
 @app.route('/api/training/<int:training_id>', methods=['PUT'])
 def update_training(training_id):
-    if state.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
     data = request.get_json()
     conn = get_db()
     c = conn.cursor()
@@ -3258,7 +3258,7 @@ def update_training(training_id):
         c.execute("""
             INSERT INTO audit_log (user_id, action, entity_type, entity_id, after_json, ip_address, user_agent)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (state['user_id'], 'training_update', 'training', training_id, json.dumps(data), '', ''))
+        """, (session['user_id'], 'training_update', 'training', training_id, json.dumps(data), '', ''))
         
         conn.commit()
         conn.close()
@@ -3270,7 +3270,7 @@ def update_training(training_id):
 
 @app.route('/api/training/<int:training_id>', methods=['DELETE'])
 def delete_training(training_id):
-    if state.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
     conn = get_db()
     c = conn.cursor()
     try:
@@ -3280,7 +3280,7 @@ def delete_training(training_id):
         c.execute("""
             INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (state['user_id'], 'training_delete', 'training', training_id, '', ''))
+        """, (session['user_id'], 'training_delete', 'training', training_id, '', ''))
         
         conn.commit()
         conn.close()
@@ -3293,12 +3293,16 @@ def delete_training(training_id):
 @app.route('/api/training/available', methods=['GET'])
 def get_available_trainings():
     """Get trainings available to logged-in user based on target_type"""
-    if not state.get('user'):
-        return {'error': 'Unauthorized'}, 401
+    err = require_login()
+    if err: return err
     
-    user_id = state['user_id']
-    user_role = state.get('role')
-    user_dept = state.get('user', {}).get('branch_id')
+    user_id = session['user_id']
+    user_role = session.get('role')
+    _temp_conn = get_db(); _temp_c = _temp_conn.cursor()
+    _temp_c.execute('SELECT branch_id FROM users WHERE id=%s', (session['user_id'],))
+    _temp_row = _temp_c.fetchone()
+    user_dept = _temp_row['branch_id'] if _temp_row else None
+    _temp_conn.close()
     
     conn = get_db()
     c = conn.cursor()
@@ -3338,10 +3342,11 @@ def get_available_trainings():
 
 @app.route('/api/training/enroll', methods=['POST'])
 def enroll_training():
-    if not state.get('user'): return {'error': 'Unauthorized'}, 401
+    err = require_login()
+    if err: return err
     
     data = request.get_json()
-    user_id = state['user_id']
+    user_id = session['user_id']
     training_id = data.get('training_id')
     
     conn = get_db()
@@ -3390,7 +3395,7 @@ def enroll_training():
             send_email(
                 manager[1],
                 'Training Enrollment Approval Required',
-                f'Employee {state["user"].get("name")} has enrolled in {training_name}. Please approve or reject.'
+                f'An employee has enrolled in {training_name}. Please approve or reject.'
             )
         
         return jsonify({'id': enroll_id, 'status': 'pending_approval', 'ok': True})
@@ -3401,9 +3406,10 @@ def enroll_training():
 
 @app.route('/api/training/my-enrollments', methods=['GET'])
 def get_my_enrollments():
-    if not state.get('user'): return {'error': 'Unauthorized'}, 401
+    err = require_login()
+    if err: return err
     
-    user_id = state['user_id']
+    user_id = session['user_id']
     conn = get_db()
     c = conn.cursor()
     
@@ -3434,13 +3440,13 @@ def get_my_enrollments():
 @app.route('/api/training/enrollments', methods=['GET'])
 def get_enrollments():
     """Get pending/all enrollments - Manager/HR can see team/company"""
-    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
     
     status_filter = request.args.get('status', 'pending_approval')
     conn = get_db()
     c = conn.cursor()
     
-    if state.get('role') == 'manager':
+    if session.get('role') == 'manager':
         # Manager sees team enrollments
         c.execute("""
             SELECT te.id, te.user_id, u.name, te.training_id, t.name, te.status, te.enrolled_at
@@ -3449,7 +3455,7 @@ def get_enrollments():
             JOIN users u ON te.user_id = u.id
             WHERE u.manager_id = %s AND te.status = %s
             ORDER BY te.enrolled_at DESC
-        """, (state['user_id'], status_filter))
+        """, (session['user_id'], status_filter))
     else:
         # HR sees all
         c.execute("""
@@ -3479,7 +3485,7 @@ def get_enrollments():
 @app.route('/api/training/enroll/<int:enroll_id>/approve', methods=['POST'])
 def approve_enrollment(enroll_id):
     """Manager/HR approves enrollment"""
-    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
     
     conn = get_db()
     c = conn.cursor()
@@ -3505,7 +3511,7 @@ def approve_enrollment(enroll_id):
             UPDATE training_enrollments
             SET status='approved', manager_approved=TRUE, manager_approved_by=%s, manager_approved_at=NOW()
             WHERE id=%s
-        """, (state['user_id'], enroll_id))
+        """, (session['user_id'], enroll_id))
         
         # Create attendance records for training dates
         current = start_date
@@ -3521,7 +3527,7 @@ def approve_enrollment(enroll_id):
         c.execute("""
             INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (state['user_id'], 'training_enroll_approve', 'enrollment', enroll_id, '', ''))
+        """, (session['user_id'], 'training_enroll_approve', 'enrollment', enroll_id, '', ''))
         
         conn.commit()
         conn.close()
@@ -3541,7 +3547,7 @@ def approve_enrollment(enroll_id):
 @app.route('/api/training/enroll/<int:enroll_id>/reject', methods=['POST'])
 def reject_enrollment(enroll_id):
     """Manager/HR rejects enrollment"""
-    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
     
     data = request.get_json()
     reason = data.get('rejection_reason', '')
@@ -3575,7 +3581,7 @@ def reject_enrollment(enroll_id):
         c.execute("""
             INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (state['user_id'], 'training_enroll_reject', 'enrollment', enroll_id, '', ''))
+        """, (session['user_id'], 'training_enroll_reject', 'enrollment', enroll_id, '', ''))
         
         conn.commit()
         conn.close()
@@ -3597,10 +3603,11 @@ def reject_enrollment(enroll_id):
 @app.route('/api/training/certificate/submit', methods=['POST'])
 def submit_certificate():
     """Employee submits certificate after training"""
-    if not state.get('user'): return {'error': 'Unauthorized'}, 401
+    err = require_login()
+    if err: return err
     
     data = request.get_json()
-    user_id = state['user_id']
+    user_id = session['user_id']
     
     conn = get_db()
     c = conn.cursor()
@@ -3644,7 +3651,7 @@ def submit_certificate():
             send_email(
                 manager[1],
                 'Training Certificate Submitted',
-                f'Employee {state["user"].get("name")} has submitted a certificate for {training_name}. Please review and approve.'
+                f'An employee has submitted a certificate for {training_name}. Please review and approve.'
             )
         
         return jsonify({'id': cert_id, 'status': 'pending_approval', 'ok': True})
@@ -3655,9 +3662,10 @@ def submit_certificate():
 
 @app.route('/api/training/my-certificates', methods=['GET'])
 def get_my_certificates():
-    if not state.get('user'): return {'error': 'Unauthorized'}, 401
+    err = require_login()
+    if err: return err
     
-    user_id = state['user_id']
+    user_id = session['user_id']
     conn = get_db()
     c = conn.cursor()
     
@@ -3690,12 +3698,12 @@ def get_my_certificates():
 @app.route('/api/training/certificates', methods=['GET'])
 def get_certificates():
     """Manager/HR sees team/company certificates"""
-    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
     
     conn = get_db()
     c = conn.cursor()
     
-    if state.get('role') == 'manager':
+    if session.get('role') == 'manager':
         # Manager sees team certs
         c.execute("""
             SELECT tc.id, tc.user_id, u.name, t.name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.status
@@ -3704,7 +3712,7 @@ def get_certificates():
             JOIN users u ON tc.user_id = u.id
             WHERE u.manager_id = %s
             ORDER BY tc.expiry_date ASC
-        """, (state['user_id'],))
+        """, (session['user_id'],))
     else:
         # HR sees all
         c.execute("""
@@ -3736,7 +3744,7 @@ def get_certificates():
 @app.route('/api/training/certificates/expiring', methods=['GET'])
 def get_expiring_certificates():
     """HR Dashboard - certs expiring in X days"""
-    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    if session.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
     
     days = request.args.get('days', 30, type=int)
     conn = get_db()
@@ -3771,7 +3779,7 @@ def get_expiring_certificates():
 @app.route('/api/training/certificate/<int:cert_id>/approve', methods=['POST'])
 def approve_certificate(cert_id):
     """Manager/HR approves certificate"""
-    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
     
     conn = get_db()
     c = conn.cursor()
@@ -3792,7 +3800,7 @@ def approve_certificate(cert_id):
             UPDATE training_certificates
             SET status='approved', approved_by=%s, approved_at=NOW()
             WHERE id=%s
-        """, (state['user_id'], cert_id))
+        """, (session['user_id'], cert_id))
         
         # Update R4b certificate fields
         c.execute("""
@@ -3805,7 +3813,7 @@ def approve_certificate(cert_id):
         c.execute("""
             INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (state['user_id'], 'training_cert_approve', 'certificate', cert_id, '', ''))
+        """, (session['user_id'], 'training_cert_approve', 'certificate', cert_id, '', ''))
         
         conn.commit()
         conn.close()
@@ -3825,7 +3833,7 @@ def approve_certificate(cert_id):
 @app.route('/api/training/certificate/<int:cert_id>/reject', methods=['POST'])
 def reject_certificate(cert_id):
     """Manager/HR rejects certificate"""
-    if state.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
     
     data = request.get_json()
     reason = data.get('rejection_reason', '')
@@ -3855,7 +3863,7 @@ def reject_certificate(cert_id):
         c.execute("""
             INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (state['user_id'], 'training_cert_reject', 'certificate', cert_id, '', ''))
+        """, (session['user_id'], 'training_cert_reject', 'certificate', cert_id, '', ''))
         
         conn.commit()
         conn.close()
@@ -3877,7 +3885,7 @@ def reject_certificate(cert_id):
 @app.route('/api/training/dashboard', methods=['GET'])
 def get_training_dashboard():
     """HR Dashboard - expiring certs, missing mandatory, compliance rate"""
-    if state.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
+    if session.get('role') != 'hr_admin': return {'error': 'Unauthorized'}, 403
     
     conn = get_db()
     c = conn.cursor()
