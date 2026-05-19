@@ -282,9 +282,6 @@ function renderShell() {
         <button class="nav-item ${state.page==='leave'?'active':''}" onclick="navigate('leave')">
           <span class="nav-icon">🏖</span> Leave
         </button>
-        <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
-          <span class="nav-icon">📍</span> Business Trips
-        </button>
         <button class="nav-item ${state.page==='reports'?'active':''}" onclick="navigate('reports')">
           <span class="nav-icon">📊</span> Reports
         </button>
@@ -407,10 +404,7 @@ async function loadPage() {
     case 'blackout-dates':              return renderBlackoutDates();
     case 'pdp':                         return renderPDP();
 
-    case 'business-trips':
-                        return renderBusinessTrips();
-    case 'training-management':
-                        return renderTrainingManagement();
+    case 'training-management':         return renderTrainingManagement();
     case 'training-catalog':            return renderTrainingCatalog();
     case 'training-approvals':          return renderTrainingApprovals();
     case 'deletion-requests': {
@@ -3424,12 +3418,7 @@ function auditExportCSV() {
 }
 
 // ── R2 · Consent & Data Privacy ────────────────────────────────────────────
-const pdpState = { showModal: false, deleteReason: '', deletionRequests: [] };
-
-const PRIVACY_POLICY_ID = 'id-privacy-policy';
-const CURRENT_CONSENT_VERSION = '2026-05-v1';
-
-
+const pdpState = { showModal: false, deleteReason: '', deletionR
 // ── R11: Business Trips ────────────────────────────────────────────────────
 
 async function renderBusinessTrips() {
@@ -3501,7 +3490,7 @@ async function renderManagerTrips() {
       <div><h1>📋 Approve Business Trips</h1><p>Review and approve team trip requests</p></div>
     </div>
     <div id="trips-tabs" style="display: flex; gap: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem;">
-      <button class="trip-tab active" onclick="switchManagerTab('pending')">⏳ Pending (${state.pendingTripsCount || 0})</button>
+      <button class="trip-tab active" onclick="switchManagerTab('pending')">⏳ Pending</button>
       <button class="trip-tab" onclick="switchManagerTab('approved')">✅ Approved</button>
       <button class="trip-tab" onclick="switchManagerTab('team')">👥 Team Trips</button>
     </div>
@@ -3610,7 +3599,7 @@ async function loadHRTrips() {
                 ${t.status === 'completed' ? '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:3px;font-size:11px;">✓ Completed</span>' : ''}
               </td>
               <td>
-                ${t.status === 'approved' ? `<button class="btn btn-sm btn-ghost" onclick="showAdjustDatesModal('${t.id}')">Adjust Dates</button>` : ''}
+                ${t.status === 'approved' ? `<button class="btn btn-sm btn-ghost" onclick="showAdjustDatesModal('${t.id}')">Adjust</button>` : ''}
               </td>
             </tr>
           `).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div><p>No trips found</p></div></td></tr>'}
@@ -3620,8 +3609,6 @@ async function loadHRTrips() {
   
   document.getElementById('trips-content').innerHTML = html;
 }
-
-// ── Modals ────────────────────────────────────────────────────────────────
 
 async function showRequestTripModal() {
   const body = `
@@ -3738,29 +3725,11 @@ async function showAdjustDatesModal(tripId) {
   });
 }
 
-// Style for trip tabs
-const tripTabStyle = document.createElement('style');
-tripTabStyle.textContent = `
-  .trip-tab {
-    background: none;
-    border: none;
-    padding: 0.75rem 1rem;
-    cursor: pointer;
-    color: var(--text-s);
-    font-weight: 500;
-    border-bottom: 2px solid transparent;
-    transition: all 0.2s;
-  }
-  .trip-tab.active {
-    color: var(--text);
-    border-bottom-color: var(--blue);
-  }
-  .trip-tab:hover {
-    color: var(--text);
-  }
-`;
-if (document.head) document.head.appendChild(tripTabStyle);
 
+equests: [] };
+
+const PRIVACY_POLICY_ID = 'id-privacy-policy';
+const CURRENT_CONSENT_VERSION = '2026-05-v1';
 
 // ── R3 · Motivational Quotes (90 quotes) ─────────────────────────────────────
 const MOTIVATIONAL_QUOTES = [
