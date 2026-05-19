@@ -282,6 +282,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='leave'?'active':''}" onclick="navigate('leave')">
           <span class="nav-icon">🏖</span> Leave
         </button>
+        <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
+          <span class="nav-icon">📍</span> Business Trips
+        </button>
         <button class="nav-item ${state.page==='reports'?'active':''}" onclick="navigate('reports')">
           <span class="nav-icon">📊</span> Reports
         </button>
@@ -298,9 +301,6 @@ function renderShell() {
         <button class="nav-item ${state.page==='approvals'?'active':''}" onclick="navigate('approvals')">
           <span class="nav-icon">✅</span> Leave Approvals
           ${state.pendingCount > 0 ? `<span class="nav-badge">${state.pendingCount}</span>` : ''}
-        </button>
-        <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
-          <span class="nav-icon">📍</span> Business Trips
         </button>
         <button class="nav-item ${state.page==='training-management'?'active':''}" onclick="navigate('training-management')">
           <span class="nav-icon">🎓</span> Training & Certs
@@ -404,6 +404,7 @@ async function loadPage() {
     case 'blackout-dates':              return renderBlackoutDates();
     case 'pdp':                         return renderPDP();
 
+    case 'business-trips':              return renderBusinessTrips();
     case 'training-management':         return renderTrainingManagement();
     case 'training-catalog':            return renderTrainingCatalog();
     case 'training-approvals':          return renderTrainingApprovals();
@@ -3418,7 +3419,11 @@ function auditExportCSV() {
 }
 
 // ── R2 · Consent & Data Privacy ────────────────────────────────────────────
-const pdpState = { showModal: false, deleteReason: '', deletionR
+const pdpState = { showModal: false, deleteReason: '', deletionRequests: [] };
+
+const PRIVACY_POLICY_ID = 'id-privacy-policy';
+const CURRENT_CONSENT_VERSION = '2026-05-v1';
+
 // ── R11: Business Trips ────────────────────────────────────────────────────
 
 async function renderBusinessTrips() {
@@ -3490,9 +3495,9 @@ async function renderManagerTrips() {
       <div><h1>📋 Approve Business Trips</h1><p>Review and approve team trip requests</p></div>
     </div>
     <div id="trips-tabs" style="display: flex; gap: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem;">
-      <button class="trip-tab active" onclick="switchManagerTab('pending')">⏳ Pending</button>
-      <button class="trip-tab" onclick="switchManagerTab('approved')">✅ Approved</button>
-      <button class="trip-tab" onclick="switchManagerTab('team')">👥 Team Trips</button>
+      <button class="trip-tab active" id="tab-pending" onclick="switchManagerTab('pending')">⏳ Pending</button>
+      <button class="trip-tab" id="tab-approved" onclick="switchManagerTab('approved')">✅ Approved</button>
+      <button class="trip-tab" id="tab-team" onclick="switchManagerTab('team')">👥 All Team Trips</button>
     </div>
     <div id="trips-content">Loading…</div>`;
   
@@ -3503,17 +3508,17 @@ async function renderManagerTrips() {
 async function switchManagerTab(tab) {
   state.currentTripTab = tab;
   document.querySelectorAll('.trip-tab').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  document.getElementById('tab-' + tab).classList.add('active');
   await loadManagerTrips(tab);
 }
 
 async function loadManagerTrips(tab) {
   let r;
   if (tab === 'pending') r = await api('GET', '/business-trips/pending');
-  else if (tab === 'approved') r = await api('GET', '/business-trips/team?status=approved');
   else r = await api('GET', '/business-trips/team');
   
-  const trips = r.ok ? r.data : [];
+  let trips = r.ok ? r.data : [];
+  if (tab === 'approved') trips = trips.filter(t => t.status === 'approved');
   
   const html = `
     <div style="display: grid; gap: 1rem;">
@@ -3534,7 +3539,7 @@ async function loadManagerTrips(tab) {
                 ${tab === 'pending' ? `
                   <button class="btn btn-sm btn-primary" onclick="showApproveTripModal('${t.id}')">Approve</button>
                   <button class="btn btn-sm btn-ghost" onclick="showRejectTripModal('${t.id}')" style="margin-top: 0.5rem;">Reject</button>
-                ` : `<span style="color: var(--text-s); font-size: 12px;">Applied ${new Date(t.created_at).toLocaleDateString()}</span>`}
+                ` : `<span style="color: var(--text-s); font-size: 12px;">${t.status}</span>`}
               </div>
             </div>
           </div>
@@ -3565,7 +3570,8 @@ async function renderHRTrips() {
 }
 
 async function loadHRTrips() {
-  const status = document.getElementById('trip-status-filter')?.value || '';
+  const statusEl = document.getElementById('trip-status-filter');
+  const status = statusEl ? statusEl.value : '';
   const url = status ? '/business-trips/all?status=' + status : '/business-trips/all';
   const r = await api('GET', url);
   const trips = r.ok ? r.data : [];
@@ -3725,11 +3731,6 @@ async function showAdjustDatesModal(tripId) {
   });
 }
 
-
-equests: [] };
-
-const PRIVACY_POLICY_ID = 'id-privacy-policy';
-const CURRENT_CONSENT_VERSION = '2026-05-v1';
 
 // ── R3 · Motivational Quotes (90 quotes) ─────────────────────────────────────
 const MOTIVATIONAL_QUOTES = [
