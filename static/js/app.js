@@ -4727,6 +4727,9 @@ function toggleAnnouncementsDropdown() {
   } else {
     dropdown.style.display = 'block';
     loadAnnouncementsDropdown();
+    // Hide the red notification dot when dropdown is opened
+    const badge = document.getElementById('announcement-badge');
+    if (badge) badge.style.display = 'none';
   }
 }
 
