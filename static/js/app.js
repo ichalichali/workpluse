@@ -346,16 +346,24 @@ function renderShell() {
           🔔
           <span id="announcement-badge" class="badge" style="
             position: absolute;
-            top: -4px;
-            right: -4px;
+            top: -8px;
+            right: -8px;
             background: #ff4757;
             border-radius: 50%;
-            width: 12px;
-            height: 12px;
+            width: 22px;
+            height: 22px;
             display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+            color: white;
             box-shadow: 0 2px 6px rgba(255, 71, 87, 0.5);
             border: 2px solid white;
-          "></span>
+            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            line-height: 1;
+            flex-direction: row;
+          ">0</span>
         </button>
         <div id="announcements-dropdown" class="announcements-dropdown" style="display:none;">
           <div class="dropdown-header">Latest Announcements</div>
@@ -4888,21 +4896,27 @@ const announcementsStyles = `
 
 .badge {
   position: absolute;
-  top: -4px;
-  right: -4px;
+  top: -8px;
+  right: -8px;
   background: #ff4757;
   border-radius: 50%;
-  width: 12px;
-  height: 12px;
+  width: 22px;
+  height: 22px;
   display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: white;
   box-shadow: 0 2px 6px rgba(255, 71, 87, 0.5);
   border: 2px solid white;
-  animation: badgePulse 2s ease-in-out infinite;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1;
 }
 
 @keyframes badgePulse {
   0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.15); }
+  50% { transform: scale(1.1); }
 }
 
 .announcements-dropdown {
