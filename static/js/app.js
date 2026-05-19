@@ -4896,22 +4896,22 @@ const announcementsStyles = `
 
 .badge {
   position: absolute;
-  top: -8px;
-  right: -8px;
+  top: -6px;
+  right: -6px;
   background: #ff4757;
   border-radius: 50%;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   display: none;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: white;
   box-shadow: 0 2px 6px rgba(255, 71, 87, 0.5);
   border: 2px solid white;
   font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  line-height: 1;
+  line-height: 1.2;
 }
 
 @keyframes badgePulse {
