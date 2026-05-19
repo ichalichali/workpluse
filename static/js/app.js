@@ -282,6 +282,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='leave'?'active':''}" onclick="navigate('leave')">
           <span class="nav-icon">🏖</span> Leave
         </button>
+        <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
+          <span class="nav-icon">📍</span> Business Trips
+        </button>
         <button class="nav-item ${state.page==='reports'?'active':''}" onclick="navigate('reports')">
           <span class="nav-icon">📊</span> Reports
         </button>
@@ -298,6 +301,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='approvals'?'active':''}" onclick="navigate('approvals')">
           <span class="nav-icon">✅</span> Leave Approvals
           ${state.pendingCount > 0 ? `<span class="nav-badge">${state.pendingCount}</span>` : ''}
+        </button>
+        <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
+          <span class="nav-icon">📍</span> Business Trips
         </button>
         <button class="nav-item ${state.page==='training-management'?'active':''}" onclick="navigate('training-management')">
           <span class="nav-icon">🎓</span> Training & Certs
@@ -401,7 +407,10 @@ async function loadPage() {
     case 'blackout-dates':              return renderBlackoutDates();
     case 'pdp':                         return renderPDP();
 
-    case 'training-management':         return renderTrainingManagement();
+    case 'business-trips':
+                        return renderBusinessTrips();
+    case 'training-management':
+                        return renderTrainingManagement();
     case 'training-catalog':            return renderTrainingCatalog();
     case 'training-approvals':          return renderTrainingApprovals();
     case 'deletion-requests': {
@@ -3419,6 +3428,339 @@ const pdpState = { showModal: false, deleteReason: '', deletionRequests: [] };
 
 const PRIVACY_POLICY_ID = 'id-privacy-policy';
 const CURRENT_CONSENT_VERSION = '2026-05-v1';
+
+
+// ── R11: Business Trips ────────────────────────────────────────────────────
+
+async function renderBusinessTrips() {
+  const role = state.user.role;
+  if (role === 'employee') return renderEmployeeTrips();
+  if (role === 'manager') return renderManagerTrips();
+  if (role === 'hr_admin') return renderHRTrips();
+}
+
+async function renderEmployeeTrips() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header flex justify-between items-center">
+      <div><h1>📍 My Business Trips</h1><p>Request and track your business travel</p></div>
+      <button class="btn btn-primary" onclick="showRequestTripModal()">+ Request New Trip</button>
+    </div>
+    <div id="trips-content">Loading…</div>`;
+  await loadEmployeeTrips();
+}
+
+async function loadEmployeeTrips() {
+  const r = await api('GET', '/business-trips/my-trips');
+  const trips = r.ok ? r.data : [];
+  
+  const statusBadge = (s) => {
+    const badges = {
+      'pending': '<span style="background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">⏳ Pending</span>',
+      'approved': '<span style="background:#dcfce7;color:#15803d;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">✅ Approved</span>',
+      'rejected': '<span style="background:#fee2e2;color:#991b1b;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">❌ Rejected</span>',
+      'completed': '<span style="background:#e0e7ff;color:#3730a3;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600">✓ Completed</span>',
+    };
+    return badges[s] || s;
+  };
+  
+  document.getElementById('trips-content').innerHTML = `
+    <div style="display: grid; gap: 1rem;">
+      ${trips.length ? trips.map(t => `
+        <div class="card">
+          <div class="card-body">
+            <div style="display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: start;">
+              <div>
+                <div style="margin-bottom: 0.5rem;">
+                  <strong style="font-size: 16px;">${t.destination}</strong>
+                  <span style="color: var(--text-s); margin-left: 0.5rem;">📍 ${t.purpose}</span>
+                </div>
+                <div style="color: var(--text-s); font-size: 14px; margin-bottom: 0.5rem;">
+                  <span class="font-mono">${t.start_date}</span> → <span class="font-mono">${t.end_date}</span>
+                </div>
+                <div style="color: var(--text-s); font-size: 12px;">
+                  Approved by: ${t.manager_name || '—'}
+                  ${t.approved_at ? ` · ${new Date(t.approved_at).toLocaleDateString()}` : ''}
+                </div>
+              </div>
+              <div style="text-align: right;">
+                ${statusBadge(t.status)}
+                ${t.rejection_reason ? `<div style="color: #991b1b; font-size: 12px; margin-top: 0.5rem;">Reason: ${t.rejection_reason}</div>` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+      `).join('') : '<div class="empty-state"><div class="icon">📭</div><p>No business trips yet</p></div>'}
+    </div>`;
+}
+
+async function renderManagerTrips() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header">
+      <div><h1>📋 Approve Business Trips</h1><p>Review and approve team trip requests</p></div>
+    </div>
+    <div id="trips-tabs" style="display: flex; gap: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem;">
+      <button class="trip-tab active" onclick="switchManagerTab('pending')">⏳ Pending (${state.pendingTripsCount || 0})</button>
+      <button class="trip-tab" onclick="switchManagerTab('approved')">✅ Approved</button>
+      <button class="trip-tab" onclick="switchManagerTab('team')">👥 Team Trips</button>
+    </div>
+    <div id="trips-content">Loading…</div>`;
+  
+  state.currentTripTab = 'pending';
+  await loadManagerTrips('pending');
+}
+
+async function switchManagerTab(tab) {
+  state.currentTripTab = tab;
+  document.querySelectorAll('.trip-tab').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  await loadManagerTrips(tab);
+}
+
+async function loadManagerTrips(tab) {
+  let r;
+  if (tab === 'pending') r = await api('GET', '/business-trips/pending');
+  else if (tab === 'approved') r = await api('GET', '/business-trips/team?status=approved');
+  else r = await api('GET', '/business-trips/team');
+  
+  const trips = r.ok ? r.data : [];
+  
+  const html = `
+    <div style="display: grid; gap: 1rem;">
+      ${trips.length ? trips.map(t => `
+        <div class="card">
+          <div class="card-body">
+            <div style="display: grid; grid-template-columns: 1fr auto; gap: 1rem;">
+              <div>
+                <div><strong>${t.name}</strong> <span style="color: var(--text-s);">(${t.employee_id})</span></div>
+                <div style="color: var(--text-s); font-size: 14px; margin: 0.5rem 0;">
+                  <strong>${t.destination}</strong> · ${t.purpose}
+                </div>
+                <div style="color: var(--text-s); font-size: 12px;">
+                  <span class="font-mono">${t.start_date}</span> → <span class="font-mono">${t.end_date}</span>
+                </div>
+              </div>
+              <div style="text-align: right;">
+                ${tab === 'pending' ? `
+                  <button class="btn btn-sm btn-primary" onclick="showApproveTripModal('${t.id}')">Approve</button>
+                  <button class="btn btn-sm btn-ghost" onclick="showRejectTripModal('${t.id}')" style="margin-top: 0.5rem;">Reject</button>
+                ` : `<span style="color: var(--text-s); font-size: 12px;">Applied ${new Date(t.created_at).toLocaleDateString()}</span>`}
+              </div>
+            </div>
+          </div>
+        </div>
+      `).join('') : '<div class="empty-state"><div class="icon">📭</div><p>No trips to show</p></div>'}
+    </div>`;
+  
+  document.getElementById('trips-content').innerHTML = html;
+}
+
+async function renderHRTrips() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = `
+    <div class="page-header">
+      <div><h1>📊 All Business Trips</h1><p>Monitor company business travel</p></div>
+    </div>
+    <div id="trips-filter" style="margin-bottom: 1.5rem; display: flex; gap: 1rem;">
+      <select id="trip-status-filter" onchange="loadHRTrips()" style="padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px;">
+        <option value="">All Statuses</option>
+        <option value="pending">Pending</option>
+        <option value="approved">Approved</option>
+        <option value="rejected">Rejected</option>
+        <option value="completed">Completed</option>
+      </select>
+    </div>
+    <div id="trips-content">Loading…</div>`;
+  await loadHRTrips();
+}
+
+async function loadHRTrips() {
+  const status = document.getElementById('trip-status-filter')?.value || '';
+  const url = status ? '/business-trips/all?status=' + status : '/business-trips/all';
+  const r = await api('GET', url);
+  const trips = r.ok ? r.data : [];
+  
+  const html = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Employee</th>
+            <th>Department</th>
+            <th>Destination</th>
+            <th>Dates</th>
+            <th>Purpose</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${trips.length ? trips.map(t => `
+            <tr>
+              <td><strong>${t.name}</strong><div style="font-size: 11px; color: var(--text-s);">${t.employee_id}</div></td>
+              <td>${t.department || '—'}</td>
+              <td>${t.destination}</td>
+              <td style="font-size: 12px; color: var(--text-s);"><span class="font-mono">${t.start_date}</span> → <span class="font-mono">${t.end_date}</span></td>
+              <td style="font-size: 12px;">${t.purpose}</td>
+              <td>
+                ${t.status === 'pending' ? '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:3px;font-size:11px;">⏳ Pending</span>' : ''}
+                ${t.status === 'approved' ? '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:3px;font-size:11px;">✅ Approved</span>' : ''}
+                ${t.status === 'rejected' ? '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:3px;font-size:11px;">❌ Rejected</span>' : ''}
+                ${t.status === 'completed' ? '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:3px;font-size:11px;">✓ Completed</span>' : ''}
+              </td>
+              <td>
+                ${t.status === 'approved' ? `<button class="btn btn-sm btn-ghost" onclick="showAdjustDatesModal('${t.id}')">Adjust Dates</button>` : ''}
+              </td>
+            </tr>
+          `).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div><p>No trips found</p></div></td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+  
+  document.getElementById('trips-content').innerHTML = html;
+}
+
+// ── Modals ────────────────────────────────────────────────────────────────
+
+async function showRequestTripModal() {
+  const body = `
+    <div style="display: grid; gap: 1rem;">
+      <div>
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Start Date</label>
+        <input type="date" id="trip-start" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px;">
+      </div>
+      <div>
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">End Date</label>
+        <input type="date" id="trip-end" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px;">
+      </div>
+      <div>
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Destination</label>
+        <input type="text" id="trip-dest" placeholder="e.g., Jakarta, Surabaya" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px;">
+      </div>
+      <div>
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Purpose</label>
+        <textarea id="trip-purpose" placeholder="e.g., Client meeting, Site visit" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; resize: vertical;" rows="3"></textarea>
+      </div>
+    </div>`;
+  
+  showModal('Request Business Trip', body, async () => {
+    const start = document.getElementById('trip-start').value;
+    const end = document.getElementById('trip-end').value;
+    const dest = document.getElementById('trip-dest').value;
+    const purpose = document.getElementById('trip-purpose').value;
+    
+    if (!start || !end || !dest || !purpose) {
+      showToast('error', 'Please fill all fields');
+      return false;
+    }
+    
+    const r = await api('POST', '/business-trips/request', { start_date: start, end_date: end, destination: dest, purpose });
+    if (r.ok) {
+      showToast('success', 'Trip request submitted');
+      loadEmployeeTrips();
+      return true;
+    } else {
+      showToast('error', r.data.error || 'Failed to submit');
+      return false;
+    }
+  });
+}
+
+async function showApproveTripModal(tripId) {
+  const body = `<p style="color: var(--text-s);">Approve this business trip request?</p>`;
+  showModal('Approve Business Trip', body, async () => {
+    const r = await api('POST', '/business-trips/approve', { id: parseInt(tripId) });
+    if (r.ok) {
+      showToast('success', 'Trip approved! Attendance marked.');
+      loadManagerTrips(state.currentTripTab);
+      return true;
+    } else {
+      showToast('error', r.data.error || 'Failed to approve');
+      return false;
+    }
+  });
+}
+
+async function showRejectTripModal(tripId) {
+  const body = `
+    <div>
+      <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Rejection Reason (optional)</label>
+      <textarea id="reject-reason" placeholder="Explain why you're rejecting this request" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; resize: vertical;" rows="3"></textarea>
+    </div>`;
+  
+  showModal('Reject Business Trip', body, async () => {
+    const reason = document.getElementById('reject-reason').value;
+    const r = await api('POST', '/business-trips/reject', { id: parseInt(tripId), rejection_reason: reason });
+    if (r.ok) {
+      showToast('success', 'Trip rejected');
+      loadManagerTrips(state.currentTripTab);
+      return true;
+    } else {
+      showToast('error', r.data.error || 'Failed to reject');
+      return false;
+    }
+  });
+}
+
+async function showAdjustDatesModal(tripId) {
+  const body = `
+    <div style="display: grid; gap: 1rem;">
+      <p style="color: var(--text-s); font-size: 14px;">Adjust the trip dates if employee extended or returned early</p>
+      <div>
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">New Start Date</label>
+        <input type="date" id="adjust-start" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px;">
+      </div>
+      <div>
+        <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">New End Date</label>
+        <input type="date" id="adjust-end" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px;">
+      </div>
+    </div>`;
+  
+  showModal('Adjust Trip Dates', body, async () => {
+    const start = document.getElementById('adjust-start').value;
+    const end = document.getElementById('adjust-end').value;
+    
+    if (!start || !end) {
+      showToast('error', 'Please fill both dates');
+      return false;
+    }
+    
+    const r = await api('POST', '/business-trips/adjust-dates', { id: parseInt(tripId), start_date: start, end_date: end });
+    if (r.ok) {
+      showToast('success', 'Trip dates adjusted. Attendance updated.');
+      loadHRTrips();
+      return true;
+    } else {
+      showToast('error', r.data.error || 'Failed to adjust');
+      return false;
+    }
+  });
+}
+
+// Style for trip tabs
+const tripTabStyle = document.createElement('style');
+tripTabStyle.textContent = `
+  .trip-tab {
+    background: none;
+    border: none;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    color: var(--text-s);
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .trip-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--blue);
+  }
+  .trip-tab:hover {
+    color: var(--text);
+  }
+`;
+if (document.head) document.head.appendChild(tripTabStyle);
+
 
 // ── R3 · Motivational Quotes (90 quotes) ─────────────────────────────────────
 const MOTIVATIONAL_QUOTES = [
