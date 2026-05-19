@@ -342,20 +342,12 @@ function renderShell() {
     <main class="main-content">
       <div class="navbar-header">
         <div class="navbar-spacer"></div>
-        <button class="navbar-bell" onclick="toggleAnnouncementsDropdown()" title="Announcements" style="display: flex; align-items: center; gap: 6px;">
+        <button class="navbar-bell" onclick="toggleAnnouncementsDropdown()" title="Announcements" style="position: relative; display: flex; align-items: center;">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
           <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
         </svg>
-          <span id="announcement-badge" class="badge" style="
-            background: #ff4757;
-            border-radius: 50%;
-            width: 10px;
-            height: 10px;
-            display: none;
-            flex-shrink: 0;
-            box-shadow: 0 2px 4px rgba(255, 71, 87, 0.6);
-          "></span>
+          <span id="announcement-badge" class="badge" style="position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; background: #ff4757; border-radius: 50%; display: none; box-shadow: 0 1px 3px rgba(255, 71, 87, 0.5);"></span>
         </button>
         <div id="announcements-dropdown" class="announcements-dropdown" style="display:none;">
           <div class="dropdown-header">Latest Announcements</div>
