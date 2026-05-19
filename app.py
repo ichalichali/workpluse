@@ -689,6 +689,40 @@ def init_db():
         sys.stderr.write(f"[init_db] R10 FAILED: {e}\n")
         sys.stderr.flush()
 
+    # Release 11 · Business Trips
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS business_trips (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                destination TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                manager_id INTEGER REFERENCES users(id),
+                approved_at TIMESTAMP WITH TIME ZONE,
+                approved_by_manager_id INTEGER REFERENCES users(id),
+                rejection_reason TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_business_trips_user ON business_trips(user_id);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_business_trips_dates ON business_trips(start_date, end_date);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_business_trips_status ON business_trips(status);")
+        
+        c.execute("""
+            INSERT INTO schema_migrations (release_id, notes)
+            VALUES ('R11_business_trips', 'Business Trips - Employee travel requests with manager approval')
+            ON CONFLICT DO NOTHING;
+        """)
+        conn.commit()
+        print("[init_db] R11 Business Trips applied")
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] R11 FAILED: {e}")
+
     conn.commit(); conn.close()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -2753,41 +2787,6 @@ def review_deletion():
         log_audit(c, session['user_id'], 'user_deletion_rejected', entity_type='user',
                   entity_id=target_user_id, after={'rejection_notes': notes})
     
-
-    # Release 11 · Business Trips
-    try:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS business_trips (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                start_date DATE NOT NULL,
-                end_date DATE NOT NULL,
-                destination TEXT NOT NULL,
-                purpose TEXT NOT NULL,
-                status TEXT DEFAULT 'pending',
-                manager_id INTEGER REFERENCES users(id),
-                approved_at TIMESTAMP WITH TIME ZONE,
-                approved_by_manager_id INTEGER REFERENCES users(id),
-                rejection_reason TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-        """)
-        c.execute("CREATE INDEX IF NOT EXISTS idx_business_trips_user ON business_trips(user_id);")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_business_trips_dates ON business_trips(start_date, end_date);")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_business_trips_status ON business_trips(status);")
-        
-        c.execute("""
-            INSERT INTO schema_migrations (release_id, notes)
-            VALUES ('R11_business_trips', 'Business Trips - Employee travel requests with manager approval')
-            ON CONFLICT DO NOTHING;
-        """)
-        conn.commit()
-        print("[init_db] R11 Business Trips applied")
-    except Exception as e:
-        conn.rollback()
-        print(f"[init_db] R11 FAILED: {e}")
-
     conn.commit(); conn.close()
     return jsonify({'ok': True})
 
