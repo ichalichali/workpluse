@@ -3494,10 +3494,10 @@ async function renderManagerTrips() {
     <div class="page-header">
       <div><h1>📋 Approve Business Trips</h1><p>Review and approve team trip requests</p></div>
     </div>
-    <div id="trips-tabs" style="display: flex; gap: 1rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem;">
-      <button class="trip-tab active" id="tab-pending" onclick="switchManagerTab('pending')">⏳ Pending</button>
-      <button class="trip-tab" id="tab-approved" onclick="switchManagerTab('approved')">✅ Approved</button>
-      <button class="trip-tab" id="tab-team" onclick="switchManagerTab('team')">👥 All Team Trips</button>
+    <div class="flex gap-2 mb-4">
+      <button class="btn btn-primary btn-sm" id="tab-pending" onclick="switchManagerTab('pending')">⏳ Pending</button>
+      <button class="btn btn-ghost btn-sm" id="tab-approved" onclick="switchManagerTab('approved')">✅ Approved</button>
+      <button class="btn btn-ghost btn-sm" id="tab-team" onclick="switchManagerTab('team')">👥 All Team Trips</button>
     </div>
     <div id="trips-content">Loading…</div>`;
   
@@ -3507,8 +3507,20 @@ async function renderManagerTrips() {
 
 async function switchManagerTab(tab) {
   state.currentTripTab = tab;
-  document.querySelectorAll('.trip-tab').forEach(b => b.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
+  // Reset all tab buttons to ghost style
+  ['pending', 'approved', 'team'].forEach(t => {
+    const btn = document.getElementById('tab-' + t);
+    if (btn) {
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-ghost');
+    }
+  });
+  // Set active tab to primary style
+  const activeBtn = document.getElementById('tab-' + tab);
+  if (activeBtn) {
+    activeBtn.classList.remove('btn-ghost');
+    activeBtn.classList.add('btn-primary');
+  }
   await loadManagerTrips(tab);
 }
 
