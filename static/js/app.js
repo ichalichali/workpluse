@@ -4684,9 +4684,15 @@ async function loadAnnouncementsDropdown() {
     const announcements = (r.data || []).slice(0, 5); // Get 5 latest
     const unreadCount = announcements.length;
     
-    // Update badge (SVG circle - just show/hide, no text)
+    // Store current count globally for use when opening modal
+    state.currentAnnouncementCount = unreadCount;
+    
+    // Get last seen count from localStorage
+    const lastSeenCount = parseInt(localStorage.getItem('lastSeenAnnouncementCount') || '0');
+    
+    // Update badge (SVG circle - only show if there are NEW announcements since last seen)
     const badge = document.getElementById('announcement-badge');
-    if (unreadCount > 0) {
+    if (unreadCount > lastSeenCount) {
       badge.style.display = '';
     } else {
       badge.style.display = 'none';
@@ -4727,7 +4733,10 @@ function toggleAnnouncementsDropdown() {
   } else {
     dropdown.style.display = 'block';
     loadAnnouncementsDropdown();
-    // Hide the red notification dot when dropdown is opened
+    // Save current count as "last seen" so red dot won't reappear until NEW announcements arrive
+    const currentCount = state.currentAnnouncementCount || 0;
+    localStorage.setItem('lastSeenAnnouncementCount', currentCount.toString());
+    // Hide the red notification dot
     const badge = document.getElementById('announcement-badge');
     if (badge) badge.style.display = 'none';
   }
