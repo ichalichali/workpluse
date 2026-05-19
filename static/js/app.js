@@ -342,31 +342,20 @@ function renderShell() {
     <main class="main-content">
       <div class="navbar-header">
         <div class="navbar-spacer"></div>
-        <button class="navbar-bell" onclick="toggleAnnouncementsDropdown()" title="Announcements">
+        <button class="navbar-bell" onclick="toggleAnnouncementsDropdown()" title="Announcements" style="display: flex; align-items: center; gap: 6px;">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
           <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
         </svg>
           <span id="announcement-badge" class="badge" style="
-            position: absolute;
-            top: -8px;
-            right: -8px;
             background: #ff4757;
             border-radius: 50%;
-            width: 22px;
-            height: 22px;
+            width: 10px;
+            height: 10px;
             display: none;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            font-weight: 700;
-            color: white;
-            box-shadow: 0 2px 6px rgba(255, 71, 87, 0.5);
-            border: 2px solid white;
-            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            line-height: 1;
-            flex-direction: row;
-          ">0</span>
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(255, 71, 87, 0.6);
+          "></span>
         </button>
         <div id="announcements-dropdown" class="announcements-dropdown" style="display:none;">
           <div class="dropdown-header">Latest Announcements</div>
