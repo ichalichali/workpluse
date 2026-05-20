@@ -282,10 +282,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='leave'?'active':''}" onclick="navigate('leave')">
           <span class="nav-icon">🏖</span> Leave
         </button>
-        ${role === 'employee' ? `
         <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
           <span class="nav-icon">📍</span> Business Trips
-        </button>` : ''}
+        </button>
         <button class="nav-item ${state.page==='reports'?'active':''}" onclick="navigate('reports')">
           <span class="nav-icon">📊</span> Reports
         </button>
