@@ -1161,7 +1161,18 @@ async function loadLeaveData() {
                   <td><strong>${r.leave_name}</strong><div style="font-size:12px;color:var(--text-s)">${r.reason||''}</div></td>
                   <td class="text-sm">${formatLeaveDates(r)}</td>
                   <td>${r.days}d${r.session && r.session !== 'full' ? ` <span style="background:#e0e7ff;color:#3730a3;padding:2px 6px;border-radius:3px;font-size:11px;margin-left:6px">📅 ${r.session}</span>` : ''}</td>
-                  <td style="white-space:nowrap">${badgeHtml(r.status)}</td>
+                  <td style="white-space:nowrap">${(()=>{
+                    const s = (r.status||'').toLowerCase();
+                    const styles = {
+                      approved: 'background:#dcfce7;color:#15803d;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600',
+                      pending:  'background:#fef9c3;color:#854d0e;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600',
+                      rejected: 'background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600',
+                    };
+                    const labels = { approved:'✅ Approved', pending:'⏳ Pending', rejected:'❌ Rejected' };
+                    const style = styles[s] || 'background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600';
+                    const label = labels[s] || (s ? s.charAt(0).toUpperCase()+s.slice(1) : '—');
+                    return \`<span style="\${style}">\${label}</span>\`;
+                  })()}</td>
                   <td style="font-size:12px;color:var(--text-s);white-space:nowrap">${r.remarks||'—'}</td>
                 </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state"><div class="icon">📭</div><p>No leave requests yet</p></div></td></tr>'}
               </tbody>
@@ -1179,9 +1190,11 @@ async function showApplyModal() {
   const typesR = await api('GET', '/leave/types');
   const balR   = await api('GET', '/leave/balance');
   const attR   = await api('GET', '/leave/my-requests');
+  const cutiR  = await api('GET', '/cuti-bersama/list?year=' + new Date().getFullYear());
   const types  = typesR.data;
   const bals   = balR.data;
   const reqs   = attR.data;
+  const cutiDates = new Set((cutiR.ok ? cutiR.data : []).map(c => c.date));
   const balMap = {};
   bals.forEach(b => balMap[b.leave_type_id] = b.remaining);
 
@@ -1308,12 +1321,13 @@ async function showApplyModal() {
       <div class="lc-day-labels">
         ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div>${d}</div>`).join('')}
       </div>
-      <div class="lc-grid" id="lc-grid"></div>
+      <div class="lc-grid" id="lc-grid" style="min-height:240px"></div>
       <div class="lc-legend">
         <span><span class="lc-dot lc-dot-sel"></span> Selected</span>
         <span><span class="lc-dot lc-dot-taken"></span> Already applied</span>
         <span><span class="lc-dot lc-dot-holiday"></span> Public Holiday</span>
         <span><span class="lc-dot lc-dot-weekend"></span> Weekend</span>
+        <span><span class="lc-dot" style="background:#7c3aed"></span> Cuti Bersama</span>
       </div>
     </div>
     <div class="alert alert-info" id="days-calc" style="margin-top:12px">Click dates to select your leave days (weekends auto-skipped)
@@ -1321,7 +1335,6 @@ async function showApplyModal() {
         <br/><strong>Half-day = 0.5 day deduction</strong>
       </span>
     </div>
-    <button type="button" class="btn btn-secondary" onclick="openCutiBersamaModal()" style="margin-bottom:12px">🇮🇩 View Cuti Bersama Dates</button>
     <div class="form-group" style="margin-top:12px"><label>Reason</label><textarea id="lt-reason" rows="2" placeholder="Brief description of your leave reason…"></textarea></div>`,
     async () => {
       const duration = getSelectedLeaveDuration();
@@ -1397,18 +1410,24 @@ async function showApplyModal() {
       const isTaken   = takenDates.has(dateStr);
       const isSel     = selectedDates.has(dateStr);
       const isHoliday = holidayDates.has(dateStr);
-      const isToday   = dateStr === today.toISOString().slice(0,10);
+      const isToday    = dateStr === today.toISOString().slice(0,10);
       const holidayName = ID_HOLIDAYS[dateStr] || '';
+      const isCuti     = cutiDates.has(dateStr);
       let cls = 'lc-day';
-      if (isWeekend)        cls += ' lc-weekend';
-      else if (isHoliday)   cls += ' lc-holiday';
+      if (isWeekend)              cls += ' lc-weekend';
+      else if (isHoliday)         cls += ' lc-holiday';
       else if (isPast || isTaken) cls += ' lc-disabled';
-      else if (isSel)       cls += ' lc-sel';
-      else                  cls += ' lc-avail';
+      else if (isSel)             cls += ' lc-sel';
+      else                        cls += ' lc-avail';
       if (isToday) cls += ' lc-today';
       const clickable = !isWeekend && !isPast && !isTaken && !isHoliday;
-      const tooltip = holidayName ? `title="${holidayName}"` : '';
-      html += `<div class="${cls}" ${clickable ? `onclick="lcToggle('${dateStr}')"` : ''} ${tooltip}>${d}${isHoliday ? '<span class="lc-hflag">🇮🇩</span>' : ''}</div>`;
+      const tooltip = holidayName ? `title="${holidayName}"` : isCuti ? `title="Cuti Bersama"` : '';
+      const cutiStyle = (isCuti && !isSel && !isWeekend && !isHoliday && !isPast)
+        ? ' style="background:#ede9fe;color:#5b21b6;border:1.5px solid #7c3aed"' : '';
+      const badge = isHoliday
+        ? '<span class="lc-hflag">🇮🇩</span>'
+        : isCuti ? '<span style="font-size:8px;display:block;color:#7c3aed;line-height:1.2;margin-top:1px">cuti</span>' : '';
+      html += `<div class="${cls}"${cutiStyle} ${clickable ? `onclick="lcToggle('${dateStr}')"` : ''} ${tooltip}>${d}${badge}</div>`;
     }
     grid.innerHTML = html;
 
