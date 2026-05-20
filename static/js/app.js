@@ -23,12 +23,6 @@ let selectedLeaveSession = null;  // 'morning', 'afternoon', or null (full day)
 
 // ── Initialize from localStorage ──────────────────────────────────────────────
 function initializeSession() {
-  // If URL has reset_token, go straight to reset page (ignore saved session)
-  const urlParams = new URLSearchParams(location.search);
-  if (urlParams.get('reset_token')) {
-    state.page = 'reset';
-    return;
-  }
   const saved = localStorage.getItem('ontime_user');
   if (saved) {
     try {
@@ -225,77 +219,41 @@ function renderForgot() {
 async function doForgot() {
   const email = document.getElementById('forgot-email').value;
   const r = await api('POST', '/forgot-password', { email });
-  document.getElementById('forgot-alert').innerHTML = r.ok
-    ? `<div class="alert alert-success">✅ If that email exists, a reset link has been sent. Please check your inbox.</div>`
-    : `<div class="alert alert-error">⚠ ${r.data.error || 'Something went wrong. Please try again.'}</div>`;
+  document.getElementById('forgot-alert').innerHTML = r.data.demo_token
+    ? `<div class="alert alert-success">✅ ${r.data.message}<br><br>Demo reset token: <code style="word-break:break-all">${r.data.demo_token}</code></div>`
+    : `<div class="alert alert-success">✅ If that email exists, a reset link has been sent.</div>`;
 }
 
-async function renderReset() {
-  const token = new URLSearchParams(location.search).get('reset_token') || '';
-  const el = document.getElementById('app');
-
-  // Show loading state first
-  el.innerHTML = `
+function renderReset() {
+  const token = new URLSearchParams(location.search).get('token') || '';
+  document.getElementById('app').innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
       <div class="hero-logo"><div class="hero-logo-icon">⏱</div><div class="hero-logo-text">OnTime</div></div>
       <h1 class="hero-title">Set new<br><span>password</span></h1>
     </div>
     <div class="auth-panel">
-      <div id="reset-alert"><p style="color:var(--text-s)">Validating reset link…</p></div>
+      <h2>Create new password</h2>
+      <p class="sub">Choose a strong password for your account.</p>
+      <div id="reset-alert"></div>
+      <div class="form-group"><label>Reset Token</label><input id="reset-token" value="${token}" placeholder="Paste token here"/></div>
+      <div class="form-group"><label>New Password</label><input id="reset-pw" type="password" placeholder="Min 8 characters"/></div>
+      <div class="form-group"><label>Confirm Password</label><input id="reset-pw2" type="password" placeholder="Repeat password"/></div>
+      <button class="btn btn-primary btn-full" onclick="doReset()">Update Password</button>
     </div>
   </div>`;
-
-  if (!token) {
-    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-error">⚠ No reset token found. Please use the link from your email.</div>
-      <button class="link-btn" onclick="state.page='forgot';render()" style="margin-top:12px">← Request new reset link</button>`;
-    return;
-  }
-
-  // Validate token & get account info
-  const res = await fetch(`/api/reset-token-info?token=${encodeURIComponent(token)}`);
-  const data = await res.json();
-
-  if (!res.ok) {
-    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-error">⚠ ${data.error}</div>
-      <button class="link-btn" onclick="state.page='forgot';render()" style="margin-top:12px">← Request new reset link</button>`;
-    return;
-  }
-
-  // Show form with account banner
-  document.getElementById('reset-alert').innerHTML = `
-    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
-      <span style="font-size:20px">👤</span>
-      <div>
-        <div style="font-weight:600;color:#1e40af;">${data.name}</div>
-        <div style="font-size:13px;color:#3b82f6;">${data.email}</div>
-      </div>
-    </div>
-    <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:10px 14px;font-size:13px;color:#713f12;margin-bottom:16px;">
-      ⚠ You are resetting the password for the account above. If this is not your account, close this page.
-    </div>
-    <div class="form-group"><label>New Password</label><input id="reset-pw" type="password" placeholder="Min 8 characters"/></div>
-    <div class="form-group"><label>Confirm Password</label><input id="reset-pw2" type="password" placeholder="Repeat password"/></div>
-    <input type="hidden" id="reset-token" value="${token}"/>
-    <button class="btn btn-primary btn-full" onclick="doReset()">Update Password</button>
-    <div id="reset-result" style="margin-top:12px"></div>`;
 }
 
 async function doReset() {
   const token = document.getElementById('reset-token').value;
-  const pw    = document.getElementById('reset-pw').value;
-  const pw2   = document.getElementById('reset-pw2').value;
-  const out   = document.getElementById('reset-result');
-  if (pw !== pw2) { out.innerHTML = `<div class="alert alert-error">⚠ Passwords do not match</div>`; return; }
-  if (pw.length < 8) { out.innerHTML = `<div class="alert alert-error">⚠ Password must be at least 8 characters</div>`; return; }
+  const pw = document.getElementById('reset-pw').value;
+  const pw2 = document.getElementById('reset-pw2').value;
+  if (pw !== pw2) { document.getElementById('reset-alert').innerHTML=`<div class="alert alert-error">Passwords do not match</div>`; return; }
   const r = await api('POST', '/reset-password', { token, password: pw });
   if (r.ok) {
-    out.innerHTML = `<div class="alert alert-success">✅ Password updated! <button class="link-btn" onclick="state.page='login';render()">Sign in now →</button></div>`;
-    // Clear password fields
-    document.getElementById('reset-pw').value = '';
-    document.getElementById('reset-pw2').value = '';
+    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-success">✅ Password updated! <button class="link-btn" onclick="state.page='login';render()">Sign in now</button></div>`;
   } else {
-    out.innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`;
+    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`;
   }
 }
 
@@ -344,7 +302,7 @@ function renderShell() {
           <span class="nav-icon">✅</span> Leave Approvals
           ${state.pendingCount > 0 ? `<span class="nav-badge">${state.pendingCount}</span>` : ''}
         </button>
-        <button class="nav-item ${state.page==='business-trip-approvals'?'active':''}" onclick="navigate('business-trip-approvals')">
+        <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
           <span class="nav-icon">📍</span> Business Trip Approvals
         </button>
         <button class="nav-item ${state.page==='training-management'?'active':''}" onclick="navigate('training-management')">
@@ -450,7 +408,6 @@ async function loadPage() {
     case 'pdp':                         return renderPDP();
 
     case 'business-trips':              return renderBusinessTrips();
-    case 'business-trip-approvals':     return renderBusinessTripApprovals();
     case 'training-management':         return renderTrainingManagement();
     case 'training-catalog':            return renderTrainingCatalog();
     case 'training-approvals':          return renderTrainingApprovals();
@@ -1740,7 +1697,7 @@ async function updateProbationStatus(empId, newStatus, empName) {
   const confirm = window.confirm(`Are you sure you want to mark ${empName} as ${newStatus === 'passed' ? 'PASSED' : 'FAILED'} probation?`);
   if (!confirm) return;
   
-  const r = await api('POST', '/api/probation/update-status', { employee_id: empId, status: newStatus });
+  const r = await api('POST', '/probation/update-status', { employee_id: empId, status: newStatus });
   if (!r.ok) {
     showToast('error', `Failed: ${r.data.error}`);
     return;
@@ -1790,7 +1747,7 @@ async function showGrantLeaveExceptionModal(empId, empName) {
       return false;
     }
     
-    const r = await api('POST', '/api/probation/manual-leave', {
+    const r = await api('POST', '/probation/manual-leave', {
       employee_id: empId,
       leave_type_id: parseInt(ltId),
       days,
@@ -3473,13 +3430,8 @@ const CURRENT_CONSENT_VERSION = '2026-05-v1';
 // ── R11: Business Trips ────────────────────────────────────────────────────
 
 async function renderBusinessTrips() {
-  // MAIN nav: always show personal trips regardless of role
-  return renderEmployeeTrips();
-}
-
-async function renderBusinessTripApprovals() {
-  // MANAGEMENT nav: approval page for managers/HR
   const role = state.user.role;
+  if (role === 'employee') return renderEmployeeTrips();
   if (role === 'manager') return renderManagerTrips();
   if (role === 'hr_admin') return renderHRTrips();
 }
@@ -3904,7 +3856,7 @@ async function renderBlackoutDates() {
 }
 
 async function loadBlackoutDates() {
-  const r = await api('GET', '/api/blackout-dates');
+  const r = await api('GET', '/blackout-dates');
   const dates = r.ok ? r.data : [];
   blackoutState.dates = dates;
   const today = new Date();
@@ -3925,7 +3877,7 @@ function showBlackoutModal(bd={}) {
   showModal(isEdit ? 'Edit Blackout' : 'Add Blackout Period', '<div id="bd-alert"></div><div class="form-row"><div class="form-group"><label>Start Date</label><input id="bd-start" type="date" value="' + (bd.start_date||'') + '"/></div><div class="form-group"><label>End Date</label><input id="bd-end" type="date" value="' + (bd.end_date||'') + '"/></div></div><div class="form-group"><label>Reason</label><input id="bd-reason" value="' + (bd.reason||'') + '" placeholder="e.g., Year-end freeze"/></div><div class="form-group"><label>Applies To</label><select id="bd-scope"><option value="all" ' + (bd.applies_to==='all'?'selected':'') + '>All Employees</option><option value="department" ' + (bd.applies_to==='department'?'selected':'') + '>Department</option></select></div><label><input type="checkbox" id="bd-auto-reject" ' + (bd.auto_reject!==false?'checked':'') + '> Auto-reject leaves</label>', async () => {
     const data = { id: bd.id||null, start_date: document.getElementById('bd-start').value, end_date: document.getElementById('bd-end').value, reason: document.getElementById('bd-reason').value, applies_to: document.getElementById('bd-scope').value, auto_reject: document.getElementById('bd-auto-reject').checked };
     if (!data.start_date || !data.end_date) { document.getElementById('bd-alert').innerHTML = '<div class="alert alert-error">Dates required</div>'; return false; }
-    const r = await api('POST', '/api/blackout-dates/save', data);
+    const r = await api('POST', '/blackout-dates/save', data);
     if (!r.ok) { document.getElementById('bd-alert').innerHTML = '<div class="alert alert-error">Error: ' + r.data.error + '</div>'; return false; }
     showToast('success', isEdit ? 'Updated' : 'Added');
     await loadBlackoutDates();
@@ -3935,7 +3887,7 @@ function showBlackoutModal(bd={}) {
 
 async function deleteBlackoutDate(id) {
   if (!confirm('Delete this blackout period?')) return;
-  const r = await api('POST', '/api/blackout-dates/delete', { id });
+  const r = await api('POST', '/blackout-dates/delete', { id });
   if (r.ok) { showToast('success', 'Deleted'); await loadBlackoutDates(); }
   else showToast('error', r.data.error);
 }
@@ -3943,14 +3895,14 @@ async function deleteBlackoutDate(id) {
 const cutiState = { dates: [], selectedDates: new Set() };
 
 async function openCutiBersamaModal() {
-  const r = await api('GET', '/api/cuti-bersama/list?year=2026');
+  const r = await api('GET', '/cuti-bersama/list?year=2026');
   if (!r.ok) { showToast('error', 'Failed to load Cuti Bersama'); return; }
   cutiState.dates = r.data || [];
   cutiState.selectedDates.clear();
   showModal('🇮🇩 Cuti Bersama 2026', '<div id="cuti-alert"></div><div id="cuti-calendar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px;padding:8px;background:#f8fafc;border-radius:6px"></div><div id="cuti-selected"><span>Selected: <span id="cuti-count">0</span> days</span><div id="cuti-list" style="font-size:11px;margin-top:4px"></div></div>', async () => {
     const sorted = [...cutiState.selectedDates].sort();
     if (!sorted.length) { document.getElementById('cuti-alert').innerHTML = '<div class="alert alert-error">Select at least one date</div>'; return false; }
-    const r = await api('POST', '/api/cuti-bersama/apply', { dates: sorted });
+    const r = await api('POST', '/cuti-bersama/apply', { dates: sorted });
     if (!r.ok) { document.getElementById('cuti-alert').innerHTML = '<div class="alert alert-error">Error: ' + r.data.error + '</div>'; return false; }
     showToast('success', 'Cuti applied: ' + sorted.length + ' days');
     await loadLeaveData();
@@ -4046,7 +3998,7 @@ async function updateCutiSel() {
 }
 
 async function checkBlackoutBeforeSubmit(dates) {
-  const r = await api('POST', '/api/blackout-dates/check', { dates });
+  const r = await api('POST', '/blackout-dates/check', { dates });
   if (!r.ok) { showToast('error', 'Blackout check failed'); return false; }
   if (r.data.is_blackout) { showToast('error', 'Leave blocked during: ' + (r.data.blocking_blackout?.reason || 'Blackout')); return false; }
   return true;
