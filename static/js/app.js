@@ -1128,7 +1128,7 @@ async function loadLeaveData() {
   const reqs = reqR.data;
 
   document.getElementById('leave-content').innerHTML = `
-    <div class="grid-3">
+    <div style="display:grid;grid-template-columns:1fr 2fr;gap:1.5rem;align-items:start">
       <div>
         <div class="card mb-4">
           <div class="card-header"><h3>📊 Leave Balance ${new Date().getFullYear()}</h3></div>
@@ -1161,8 +1161,8 @@ async function loadLeaveData() {
                   <td><strong>${r.leave_name}</strong><div style="font-size:12px;color:var(--text-s)">${r.reason||''}</div></td>
                   <td class="text-sm">${formatLeaveDates(r)}</td>
                   <td>${r.days}d${r.session && r.session !== 'full' ? ` <span style="background:#e0e7ff;color:#3730a3;padding:2px 6px;border-radius:3px;font-size:11px;margin-left:6px">📅 ${r.session}</span>` : ''}</td>
-                  <td>${badgeHtml(r.status)}</td>
-                  <td style="font-size:12px;color:var(--text-s)">${r.remarks||'—'}</td>
+                  <td style="white-space:nowrap">${badgeHtml(r.status)}</td>
+                  <td style="font-size:12px;color:var(--text-s);white-space:nowrap">${r.remarks||'—'}</td>
                 </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state"><div class="icon">📭</div><p>No leave requests yet</p></div></td></tr>'}
               </tbody>
             </table>
@@ -1697,7 +1697,7 @@ async function updateProbationStatus(empId, newStatus, empName) {
   const confirm = window.confirm(`Are you sure you want to mark ${empName} as ${newStatus === 'passed' ? 'PASSED' : 'FAILED'} probation?`);
   if (!confirm) return;
   
-  const r = await api('POST', '/probation/update-status', { employee_id: empId, status: newStatus });
+  const r = await api('POST', '/api/probation/update-status', { employee_id: empId, status: newStatus });
   if (!r.ok) {
     showToast('error', `Failed: ${r.data.error}`);
     return;
@@ -1747,7 +1747,7 @@ async function showGrantLeaveExceptionModal(empId, empName) {
       return false;
     }
     
-    const r = await api('POST', '/probation/manual-leave', {
+    const r = await api('POST', '/api/probation/manual-leave', {
       employee_id: empId,
       leave_type_id: parseInt(ltId),
       days,
@@ -3856,7 +3856,7 @@ async function renderBlackoutDates() {
 }
 
 async function loadBlackoutDates() {
-  const r = await api('GET', '/blackout-dates');
+  const r = await api('GET', '/api/blackout-dates');
   const dates = r.ok ? r.data : [];
   blackoutState.dates = dates;
   const today = new Date();
@@ -3877,7 +3877,7 @@ function showBlackoutModal(bd={}) {
   showModal(isEdit ? 'Edit Blackout' : 'Add Blackout Period', '<div id="bd-alert"></div><div class="form-row"><div class="form-group"><label>Start Date</label><input id="bd-start" type="date" value="' + (bd.start_date||'') + '"/></div><div class="form-group"><label>End Date</label><input id="bd-end" type="date" value="' + (bd.end_date||'') + '"/></div></div><div class="form-group"><label>Reason</label><input id="bd-reason" value="' + (bd.reason||'') + '" placeholder="e.g., Year-end freeze"/></div><div class="form-group"><label>Applies To</label><select id="bd-scope"><option value="all" ' + (bd.applies_to==='all'?'selected':'') + '>All Employees</option><option value="department" ' + (bd.applies_to==='department'?'selected':'') + '>Department</option></select></div><label><input type="checkbox" id="bd-auto-reject" ' + (bd.auto_reject!==false?'checked':'') + '> Auto-reject leaves</label>', async () => {
     const data = { id: bd.id||null, start_date: document.getElementById('bd-start').value, end_date: document.getElementById('bd-end').value, reason: document.getElementById('bd-reason').value, applies_to: document.getElementById('bd-scope').value, auto_reject: document.getElementById('bd-auto-reject').checked };
     if (!data.start_date || !data.end_date) { document.getElementById('bd-alert').innerHTML = '<div class="alert alert-error">Dates required</div>'; return false; }
-    const r = await api('POST', '/blackout-dates/save', data);
+    const r = await api('POST', '/api/blackout-dates/save', data);
     if (!r.ok) { document.getElementById('bd-alert').innerHTML = '<div class="alert alert-error">Error: ' + r.data.error + '</div>'; return false; }
     showToast('success', isEdit ? 'Updated' : 'Added');
     await loadBlackoutDates();
@@ -3887,7 +3887,7 @@ function showBlackoutModal(bd={}) {
 
 async function deleteBlackoutDate(id) {
   if (!confirm('Delete this blackout period?')) return;
-  const r = await api('POST', '/blackout-dates/delete', { id });
+  const r = await api('POST', '/api/blackout-dates/delete', { id });
   if (r.ok) { showToast('success', 'Deleted'); await loadBlackoutDates(); }
   else showToast('error', r.data.error);
 }
@@ -3895,14 +3895,14 @@ async function deleteBlackoutDate(id) {
 const cutiState = { dates: [], selectedDates: new Set() };
 
 async function openCutiBersamaModal() {
-  const r = await api('GET', '/cuti-bersama/list?year=2026');
+  const r = await api('GET', '/api/cuti-bersama/list?year=2026');
   if (!r.ok) { showToast('error', 'Failed to load Cuti Bersama'); return; }
   cutiState.dates = r.data || [];
   cutiState.selectedDates.clear();
   showModal('🇮🇩 Cuti Bersama 2026', '<div id="cuti-alert"></div><div id="cuti-calendar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px;padding:8px;background:#f8fafc;border-radius:6px"></div><div id="cuti-selected"><span>Selected: <span id="cuti-count">0</span> days</span><div id="cuti-list" style="font-size:11px;margin-top:4px"></div></div>', async () => {
     const sorted = [...cutiState.selectedDates].sort();
     if (!sorted.length) { document.getElementById('cuti-alert').innerHTML = '<div class="alert alert-error">Select at least one date</div>'; return false; }
-    const r = await api('POST', '/cuti-bersama/apply', { dates: sorted });
+    const r = await api('POST', '/api/cuti-bersama/apply', { dates: sorted });
     if (!r.ok) { document.getElementById('cuti-alert').innerHTML = '<div class="alert alert-error">Error: ' + r.data.error + '</div>'; return false; }
     showToast('success', 'Cuti applied: ' + sorted.length + ' days');
     await loadLeaveData();
@@ -3998,7 +3998,7 @@ async function updateCutiSel() {
 }
 
 async function checkBlackoutBeforeSubmit(dates) {
-  const r = await api('POST', '/blackout-dates/check', { dates });
+  const r = await api('POST', '/api/blackout-dates/check', { dates });
   if (!r.ok) { showToast('error', 'Blackout check failed'); return false; }
   if (r.data.is_blackout) { showToast('error', 'Leave blocked during: ' + (r.data.blocking_blackout?.reason || 'Blackout')); return false; }
   return true;
