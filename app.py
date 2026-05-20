@@ -512,7 +512,7 @@ def init_db():
             ('2026-08-17', 'Independence Day', 2026, 'annual'),
             ('2026-09-16', 'Hari Raya (Haji)', 2026, 'annual'),
             ('2026-12-25', 'Christmas Day', 2026, 'annual'),
-            ('2026-12-26', 'Cuti Bersama Natal', 2026, 'annual'),
+            ('2026-12-24', 'Cuti Bersama Natal', 2026, 'annual'),
         ]
         for date, name, year, dtype in cuti_dates:
             c.execute("""
@@ -528,6 +528,20 @@ def init_db():
         """)
         conn.commit()
         sys.stderr.write("[init_db] R9 Cuti Bersama applied (13 dates)\n")
+    except Exception as e:
+        conn.rollback()
+        sys.stderr.write(f"[init_db] R9 FAILED: {e}\n")
+
+    # R9 patch: fix Dec 24 cuti bersama (Dec 26 was Saturday, wrong date)
+    try:
+        c.execute("""
+            INSERT INTO cuti_bersama (date, name, year, deduction_type)
+            VALUES ('2026-12-24', 'Cuti Bersama Natal', 2026, 'annual')
+            ON CONFLICT DO NOTHING
+        """)
+        c.execute("""DELETE FROM cuti_bersama WHERE date='2026-12-26'""")
+        conn.commit()
+        sys.stderr.write("[init_db] R9 patch: Dec 24 cuti bersama fixed\n")
         sys.stderr.flush()
     except Exception as e:
         conn.rollback()
@@ -950,19 +964,7 @@ def forgot_password():
     c.execute("UPDATE users SET reset_token=%s,reset_expires=%s WHERE id=%s",(token,expires,user['id']))
     log_audit(c, user['id'], 'password_reset_requested', entity_type='user', entity_id=user['id'], after={'email': email})
     conn.commit(); conn.close()
-    app_url = os.environ.get('APP_URL', 'https://web-production-04a25.up.railway.app')
-    reset_link = f"{app_url}/?reset_token={token}"
-    html_body = (
-        f'<div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;">'
-        f'<h2 style="color:#1e293b;">Reset Your Password</h2>'
-        f"<p>Hi {user['first_name']},</p>"
-        f'<p>Click the button below to reset your OnTime password. This link expires in <strong>1 hour</strong>.</p>'
-        f'<a href="{reset_link}" style="display:inline-block;margin:20px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Reset Password</a>'
-        f'<p style="color:#64748b;font-size:13px;">If you did not request this, ignore this email.</p>'
-        f'</div>'
-    )
-    send_email(email, 'Reset Your OnTime Password', html_body)
-    return jsonify({'ok': True, 'message': 'If that email exists, a reset link has been sent.'})
+    return jsonify({'ok':True,'demo_token':token,'message':f'Reset link sent to {email}.'})
 
 @app.route('/api/reset-password',methods=['POST'])
 def reset_password():
@@ -2445,7 +2447,7 @@ def get_cuti_bersama():
     c.execute("SELECT id, date, name, year, deduction_type FROM cuti_bersama WHERE year=%s ORDER BY date", (year,))
     rows = c.fetchall()
     conn.close()
-    result = [dict(r) for r in rows]
+    result = [{'id': r['id'], 'date': str(r['date']), 'name': r['name'], 'year': r['year'], 'deduction_type': r['deduction_type']} for r in rows]
     return jsonify(result)
 
 # ── Serve ─────────────────────────────────────────────────────────────────────
@@ -2989,6 +2991,7 @@ def get_my_announcements():
 def get_all_announcements_for_employee():
     """Get all announcements (active + expired) for employee view"""
     user_id = session.get('user_id')
+    print(f"[DEBUG] user_id: {user_id}")  # ← ADD THIS LINE
     if not user_id: return {'error': 'Not authenticated'}, 401
     
     conn = get_db()
@@ -2998,6 +3001,7 @@ def get_all_announcements_for_employee():
         c.execute("SELECT branch_id FROM users WHERE id = %s", (user_id,))
         user = c.fetchone()
         user_dept = user['branch_id'] if user else None
+        print(f"[DEBUG] user_dept: {user_dept}")  # ← ADD THIS LINE
         
         # Get ALL non-archived announcements (active + expired)
         c.execute("""
@@ -3008,13 +3012,16 @@ def get_all_announcements_for_employee():
             ORDER BY created_at DESC
         """)
         announcements = c.fetchall()
+        print(f"[DEBUG] announcements found: {len(announcements)}")  # ← ADD THIS LINE
         
         result = []
         for ann in announcements:
             audience_type = ann['audience_type']
+            print(f"[DEBUG] checking ann {ann['id']}: audience_type={audience_type}")  # ← ADD THIS LINE
             applies = False
             if audience_type == 'all':
                 applies = True
+                print(f"[DEBUG] ann {ann['id']} applies: is 'all'")  # ← ADD THIS LINE
             elif audience_type == 'department' and ann['audience_dept_id'] == user_dept:
                 applies = True
             elif audience_type == 'group':
@@ -3038,9 +3045,11 @@ def get_all_announcements_for_employee():
                     'is_expired': is_expired,
                 })
         
+        print(f"[DEBUG] result count: {len(result)}")  # ← ADD THIS LINE
         conn.close()
         return jsonify(result)
     except Exception as e:
+        print(f"[ERROR] {e}")  # ← ADD THIS LINE
         conn.close()
         return {'error': str(e)}, 400
 

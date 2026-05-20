@@ -1194,7 +1194,7 @@ async function showApplyModal() {
   const types  = typesR.data;
   const bals   = balR.data;
   const reqs   = attR.data;
-  const cutiDates = new Set((cutiR.ok ? cutiR.data : []).map(c => c.date));
+  const cutiDates = new Set(Array.isArray(cutiR.data) ? cutiR.data.map(c => String(c.date).slice(0,10)) : []);
   const balMap = {};
   bals.forEach(b => balMap[b.leave_type_id] = b.remaining);
 
@@ -1400,6 +1400,7 @@ async function showApplyModal() {
     const firstDay = new Date(calYear, calMonth, 1).getDay();
     const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
     let html = '';
+    try {
     for (let i=0; i<firstDay; i++) html += `<div></div>`;
     for (let d=1; d<=daysInMonth; d++) {
       const dateStr = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
@@ -1429,6 +1430,7 @@ async function showApplyModal() {
         : isCuti ? '<span style="font-size:8px;display:block;color:#7c3aed;line-height:1.2;margin-top:1px">cuti</span>' : '';
       html += `<div class="${cls}"${cutiStyle} ${clickable ? `onclick="lcToggle('${dateStr}')"` : ''} ${tooltip}>${d}${badge}</div>`;
     }
+    } catch(e) { console.error('[renderCalendar]', e); }
     grid.innerHTML = html;
 
     // Update summary
