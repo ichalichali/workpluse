@@ -4002,8 +4002,8 @@ def request_business_trip():
     uid = session['user_id']
     role = session['role']
     
-    if role != 'employee':
-        return jsonify({'error': 'Only employees can request trips'}), 403
+    if session.get('role') not in ('employee', 'manager', 'hr_admin'):
+    return {'error': 'Unauthorized'}, 403
     
     data = request.get_json() or {}
     start_date = data.get('start_date')
