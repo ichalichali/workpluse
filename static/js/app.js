@@ -23,6 +23,12 @@ let selectedLeaveSession = null;  // 'morning', 'afternoon', or null (full day)
 
 // ── Initialize from localStorage ──────────────────────────────────────────────
 function initializeSession() {
+  // If URL has reset_token, go straight to reset page (ignore saved session)
+  const urlParams = new URLSearchParams(location.search);
+  if (urlParams.get('reset_token')) {
+    state.page = 'reset';
+    return;
+  }
   const saved = localStorage.getItem('ontime_user');
   if (saved) {
     try {
@@ -225,7 +231,7 @@ async function doForgot() {
 }
 
 function renderReset() {
-  const token = new URLSearchParams(location.search).get('token') || '';
+  const token = new URLSearchParams(location.search).get('reset_token') || '';
   document.getElementById('app').innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
