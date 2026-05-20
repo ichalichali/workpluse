@@ -230,36 +230,72 @@ async function doForgot() {
     : `<div class="alert alert-success">✅ If that email exists, a reset link has been sent.</div>`;
 }
 
-function renderReset() {
+async function renderReset() {
   const token = new URLSearchParams(location.search).get('reset_token') || '';
-  document.getElementById('app').innerHTML = `
+  const el = document.getElementById('app');
+
+  // Show loading state first
+  el.innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
       <div class="hero-logo"><div class="hero-logo-icon">⏱</div><div class="hero-logo-text">OnTime</div></div>
       <h1 class="hero-title">Set new<br><span>password</span></h1>
     </div>
     <div class="auth-panel">
-      <h2>Create new password</h2>
-      <p class="sub">Choose a strong password for your account.</p>
-      <div id="reset-alert"></div>
-      <div class="form-group"><label>Reset Token</label><input id="reset-token" value="${token}" placeholder="Paste token here"/></div>
-      <div class="form-group"><label>New Password</label><input id="reset-pw" type="password" placeholder="Min 8 characters"/></div>
-      <div class="form-group"><label>Confirm Password</label><input id="reset-pw2" type="password" placeholder="Repeat password"/></div>
-      <button class="btn btn-primary btn-full" onclick="doReset()">Update Password</button>
+      <div id="reset-alert"><p style="color:var(--text-s)">Validating reset link…</p></div>
     </div>
   </div>`;
+
+  if (!token) {
+    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-error">⚠ No reset token found. Please use the link from your email.</div>
+      <button class="link-btn" onclick="state.page='forgot';render()" style="margin-top:12px">← Request new reset link</button>`;
+    return;
+  }
+
+  // Validate token & get account info
+  const res = await fetch(`/api/reset-token-info?token=${encodeURIComponent(token)}`);
+  const data = await res.json();
+
+  if (!res.ok) {
+    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-error">⚠ ${data.error}</div>
+      <button class="link-btn" onclick="state.page='forgot';render()" style="margin-top:12px">← Request new reset link</button>`;
+    return;
+  }
+
+  // Show form with account banner
+  document.getElementById('reset-alert').innerHTML = `
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;">
+      <span style="font-size:20px">👤</span>
+      <div>
+        <div style="font-weight:600;color:#1e40af;">${data.name}</div>
+        <div style="font-size:13px;color:#3b82f6;">${data.email}</div>
+      </div>
+    </div>
+    <div style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:10px 14px;font-size:13px;color:#713f12;margin-bottom:16px;">
+      ⚠ You are resetting the password for the account above. If this is not your account, close this page.
+    </div>
+    <div class="form-group"><label>New Password</label><input id="reset-pw" type="password" placeholder="Min 8 characters"/></div>
+    <div class="form-group"><label>Confirm Password</label><input id="reset-pw2" type="password" placeholder="Repeat password"/></div>
+    <input type="hidden" id="reset-token" value="${token}"/>
+    <button class="btn btn-primary btn-full" onclick="doReset()">Update Password</button>
+    <div id="reset-result" style="margin-top:12px"></div>`;
 }
 
 async function doReset() {
   const token = document.getElementById('reset-token').value;
-  const pw = document.getElementById('reset-pw').value;
-  const pw2 = document.getElementById('reset-pw2').value;
-  if (pw !== pw2) { document.getElementById('reset-alert').innerHTML=`<div class="alert alert-error">Passwords do not match</div>`; return; }
+  const pw    = document.getElementById('reset-pw').value;
+  const pw2   = document.getElementById('reset-pw2').value;
+  const out   = document.getElementById('reset-result');
+  if (pw !== pw2) { out.innerHTML = `<div class="alert alert-error">⚠ Passwords do not match</div>`; return; }
+  if (pw.length < 8) { out.innerHTML = `<div class="alert alert-error">⚠ Password must be at least 8 characters</div>`; return; }
   const r = await api('POST', '/reset-password', { token, password: pw });
   if (r.ok) {
-    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-success">✅ Password updated! <button class="link-btn" onclick="state.page='login';render()">Sign in now</button></div>`;
+    out.innerHTML = `<div class="alert alert-success">✅ Password updated! <button class="link-btn" onclick="state.page='login';render()">Sign in now →</button></div>`;
+    // Clear password fields
+    document.getElementById('reset-pw').value = '';
+    document.getElementById('reset-pw2').value = '';
   } else {
-    document.getElementById('reset-alert').innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`;
+    out.innerHTML = `<div class="alert alert-error">⚠ ${r.data.error}</div>`;
   }
 }
 
