@@ -225,9 +225,9 @@ function renderForgot() {
 async function doForgot() {
   const email = document.getElementById('forgot-email').value;
   const r = await api('POST', '/forgot-password', { email });
-  document.getElementById('forgot-alert').innerHTML = r.data.demo_token
-    ? `<div class="alert alert-success">✅ ${r.data.message}<br><br>Demo reset token: <code style="word-break:break-all">${r.data.demo_token}</code></div>`
-    : `<div class="alert alert-success">✅ If that email exists, a reset link has been sent.</div>`;
+  document.getElementById('forgot-alert').innerHTML = r.ok
+    ? `<div class="alert alert-success">✅ If that email exists, a reset link has been sent. Please check your inbox.</div>`
+    : `<div class="alert alert-error">⚠ ${r.data.error || 'Something went wrong. Please try again.'}</div>`;
 }
 
 async function renderReset() {
