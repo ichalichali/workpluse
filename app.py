@@ -4003,7 +4003,7 @@ def request_business_trip():
     role = session['role']
     
     if session.get('role') not in ('employee', 'manager', 'hr_admin'):
-    return {'error': 'Unauthorized'}, 403
+       return {'error': 'Unauthorized'}, 403
     
     data = request.get_json() or {}
     start_date = data.get('start_date')
