@@ -1171,7 +1171,7 @@ async function loadLeaveData() {
                     const labels = { approved:'✅ Approved', pending:'⏳ Pending', rejected:'❌ Rejected' };
                     const style = styles[s] || 'background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600';
                     const label = labels[s] || (s ? s.charAt(0).toUpperCase()+s.slice(1) : '—');
-                    return \`<span style="\${style}">\${label}</span>\`;
+                    return '<span style="' + style + '">' + label + '</span>';
                   })()}</td>
                   <td style="font-size:12px;color:var(--text-s);white-space:nowrap">${r.remarks||'—'}</td>
                 </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state"><div class="icon">📭</div><p>No leave requests yet</p></div></td></tr>'}
