@@ -950,7 +950,23 @@ def forgot_password():
     c.execute("UPDATE users SET reset_token=%s,reset_expires=%s WHERE id=%s",(token,expires,user['id']))
     log_audit(c, user['id'], 'password_reset_requested', entity_type='user', entity_id=user['id'], after={'email': email})
     conn.commit(); conn.close()
-    return jsonify({'ok':True,'demo_token':token,'message':f'Reset link sent to {email}.'})
+
+    # Send password reset email
+    app_url = os.environ.get('APP_URL', 'https://web-production-04a25.up.railway.app')
+    reset_link = f"{app_url}/?reset_token={token}"
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;">
+      <h2 style="color:#1e293b;">Reset Your Password</h2>
+      <p>Hi {user['first_name']},</p>
+      <p>You requested a password reset for your OnTime account. Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>
+      <a href="{reset_link}" style="display:inline-block;margin:20px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">Reset Password</a>
+      <p style="color:#64748b;font-size:13px;">If you didn't request this, ignore this email — your password won't change.</p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0;"/>
+      <p style="color:#94a3b8;font-size:12px;">OnTime Attendance & Leave Management</p>
+    </div>
+    """
+    send_email(email, 'Reset Your OnTime Password', html_body)
+    return jsonify({'ok':True,'message':f'Reset link sent to {email}.'})
 
 @app.route('/api/reset-password',methods=['POST'])
 def reset_password():
