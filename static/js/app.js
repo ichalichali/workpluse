@@ -138,9 +138,9 @@ function renderLogin() {
       <div style="margin-top:24px;padding:16px;background:#f8fafc;border-radius:10px;font-size:13px;color:#64748b">
         <strong style="display:block;margin-bottom:8px;color:#334155">🔑 Demo accounts</strong>
         <div style="display:grid;gap:4px">
-          /*<span>HR Admin: <code>hr@company.com</code> / <code>hr123</code></span>
+          <span>HR Admin: <code>hr@company.com</code> / <code>hr123</code></span>
           <span>Manager: <code>manager@company.com</code> / <code>mgr123</code></span>
-          <span>Employee: <code>alice@company.com</code> / <code>emp123</code></span>*/
+          <span>Employee: <code>alice@company.com</code> / <code>emp123</code></span>
         </div>
       </div>
     </div>
