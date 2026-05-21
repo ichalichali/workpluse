@@ -302,7 +302,7 @@ function renderShell() {
           <span class="nav-icon">✅</span> Leave Approvals
           ${state.pendingCount > 0 ? `<span class="nav-badge">${state.pendingCount}</span>` : ''}
         </button>
-        <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
+        <button class="nav-item ${state.page==='business-trip-approvals'?'active':''}" onclick="navigate('business-trip-approvals')">
           <span class="nav-icon">📍</span> Business Trip Approvals
         </button>
         <button class="nav-item ${state.page==='training-management'?'active':''}" onclick="navigate('training-management')">
@@ -412,6 +412,7 @@ async function loadPage() {
     case 'pdp':                         return renderPDP();
 
     case 'business-trips':              return renderBusinessTrips();
+    case 'business-trip-approvals':     return renderBusinessTripApprovals();
     case 'training-management':         return renderTrainingManagement();
     case 'training-catalog':            return renderTrainingCatalog();
     case 'training-approvals':          return renderTrainingApprovals();
@@ -3455,8 +3456,13 @@ const CURRENT_CONSENT_VERSION = '2026-05-v1';
 // ── R11: Business Trips ────────────────────────────────────────────────────
 
 async function renderBusinessTrips() {
+  // MAIN nav: always show personal trips for all roles
+  return renderEmployeeTrips();
+}
+
+async function renderBusinessTripApprovals() {
+  // MANAGEMENT nav: approval view for managers/HR
   const role = state.user.role;
-  if (role === 'employee') return renderEmployeeTrips();
   if (role === 'manager') return renderManagerTrips();
   if (role === 'hr_admin') return renderHRTrips();
 }
