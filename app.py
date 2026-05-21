@@ -624,6 +624,7 @@ def init_db():
         """)
         c.execute("CREATE INDEX IF NOT EXISTS idx_enroll_user ON training_enrollments(user_id);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_enroll_status ON training_enrollments(status);")
+        c.execute("ALTER TABLE training_enrollments ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP WITH TIME ZONE")
         
         c.execute("""
             CREATE TABLE IF NOT EXISTS training_certificates (
@@ -4032,6 +4033,144 @@ def get_training_dashboard():
         'compliant_employees': compliant,
         'compliance_rate': round(compliance_rate, 1)
     })
+
+
+@app.route('/api/training/notify-targets', methods=['POST'])
+def training_notify_targets():
+    err = require_login()
+    if err: return err
+    if session.get('role') not in ('hr_admin', 'manager'): return jsonify({'error': 'Unauthorized'}), 403
+    data = request.get_json() or {}
+    training_id = data.get('training_id')
+    if not training_id: return jsonify({'error': 'training_id required'}), 400
+    conn = get_db(); c = conn.cursor()
+    try:
+        c.execute("SELECT * FROM trainings WHERE id=%s", (training_id,))
+        training = c.fetchone()
+        if not training: return jsonify({'error': 'Training not found'}), 404
+        target_type = training['target_type']
+        target_users = []
+        if target_type == 'all':
+            c.execute("SELECT id, name, email FROM users WHERE deleted_at IS NULL")
+            target_users = c.fetchall()
+        elif target_type == 'department' and training['target_department_id']:
+            c.execute("SELECT id, name, email FROM users WHERE branch_id=%s AND deleted_at IS NULL",
+                      (training['target_department_id'],))
+            target_users = c.fetchall()
+        elif target_type == 'role' and training['target_role']:
+            c.execute("SELECT id, name, email FROM users WHERE role=%s AND deleted_at IS NULL",
+                      (training['target_role'],))
+            target_users = c.fetchall()
+        elif target_type == 'user' and training['target_user_ids_json']:
+            user_ids = json.loads(training['target_user_ids_json'])
+            if user_ids:
+                placeholders = ','.join(['%s'] * len(user_ids))
+                c.execute(f"SELECT id, name, email FROM users WHERE id IN ({placeholders}) AND deleted_at IS NULL", user_ids)
+                target_users = c.fetchall()
+        notified = 0
+        for user in target_users:
+            c.execute("""
+                INSERT INTO training_enrollments (user_id, training_id, status)
+                VALUES (%s, %s, 'invited') ON CONFLICT (user_id, training_id) DO NOTHING
+            """, (user['id'], training_id))
+            html = (
+                '<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">'
+                '<div style="background:#0f1f3d;padding:20px 24px"><h2 style="color:white;margin:0">OnTime — Training Assignment</h2></div>'
+                '<div style="padding:24px">'
+                f'<p>Hi <strong>{user["name"]}</strong>,</p>'
+                '<p>You have been assigned to a training program. Please log in to <strong>OnTime → Training & Certs</strong> to confirm your participation.</p>'
+                '<table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">'
+                f'<tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600;width:140px">Training</td><td style="padding:10px"><strong>{training["name"]}</strong></td></tr>'
+                f'<tr><td style="padding:10px;color:#64748b;font-weight:600">Dates</td><td style="padding:10px">{training["start_date"]} to {training["end_date"]}</td></tr>'
+                f'<tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600">Location</td><td style="padding:10px">{training["location"] or "TBD"}</td></tr>'
+                f'<tr><td style="padding:10px;color:#64748b;font-weight:600">Mandatory</td><td style="padding:10px">{"Yes" if training["is_mandatory"] else "No"}</td></tr>'
+                '</table>'
+                '</div></div>'
+            )
+            send_email(user['email'], f'[OnTime] Training Assignment: {training["name"]}', html, force=True)
+            notified += 1
+        conn.commit(); conn.close()
+        return jsonify({'ok': True, 'notified': notified})
+    except Exception as e:
+        conn.rollback(); conn.close()
+        sys.stderr.write(f"[training_notify_targets] {e}\n")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/training/acknowledge', methods=['POST'])
+def acknowledge_training():
+    err = require_login()
+    if err: return err
+    uid = session['user_id']
+    data = request.get_json() or {}
+    enrollment_id = data.get('enrollment_id')
+    if not enrollment_id: return jsonify({'error': 'enrollment_id required'}), 400
+    conn = get_db(); c = conn.cursor()
+    try:
+        c.execute("""
+            SELECT te.*, t.name as training_name, t.start_date, t.end_date
+            FROM training_enrollments te JOIN trainings t ON te.training_id=t.id
+            WHERE te.id=%s AND te.user_id=%s
+        """, (enrollment_id, uid))
+        enrollment = c.fetchone()
+        if not enrollment: conn.close(); return jsonify({'error': 'Enrollment not found'}), 404
+        c.execute("UPDATE training_enrollments SET status='acknowledged', acknowledged_at=%s WHERE id=%s",
+                  (now_local().isoformat(), enrollment_id))
+        c.execute("SELECT name FROM users WHERE id=%s", (uid,))
+        emp = c.fetchone()
+        c.execute("SELECT email FROM users WHERE role='hr_admin' LIMIT 1")
+        hr = c.fetchone()
+        if hr and emp:
+            html = (
+                '<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto">'
+                f'<p><strong>{emp["name"]}</strong> has confirmed participation in '
+                f'<strong>{enrollment["training_name"]}</strong> ({enrollment["start_date"]} to {enrollment["end_date"]}).</p>'
+                '<p style="color:#64748b;font-size:13px">Automated notification from OnTime.</p></div>'
+            )
+            send_email(hr['email'], f'[OnTime] Training Confirmed: {emp["name"]} — {enrollment["training_name"]}', html, force=True)
+        log_audit(c, uid, 'training_acknowledged', entity_type='enrollment', entity_id=enrollment_id)
+        conn.commit(); conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback(); conn.close()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/training/send-reminders', methods=['POST'])
+def send_training_reminders():
+    err = require_login()
+    if err: return err
+    if session.get('role') != 'hr_admin': return jsonify({'error': 'Unauthorized'}), 403
+    tomorrow = (today_local() + timedelta(days=1)).isoformat()
+    conn = get_db(); c = conn.cursor()
+    try:
+        c.execute("""
+            SELECT te.id, u.name, u.email, t.name as training_name, t.start_date, t.location
+            FROM training_enrollments te
+            JOIN users u ON te.user_id=u.id
+            JOIN trainings t ON te.training_id=t.id
+            WHERE t.start_date=%s AND te.status IN ('invited','acknowledged','pending_approval')
+              AND u.deleted_at IS NULL
+        """, (tomorrow,))
+        enrollments = c.fetchall()
+        conn.close()
+        sent = 0
+        for e in enrollments:
+            html = (
+                '<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">'
+                '<div style="background:#f59e0b;padding:20px 24px"><h2 style="color:white;margin:0">Training Reminder — Tomorrow!</h2></div>'
+                '<div style="padding:24px">'
+                f'<p>Hi <strong>{e["name"]}</strong>, this is a reminder that your training is <strong>tomorrow</strong>:</p>'
+                f'<p><strong>{e["training_name"]}</strong> — {e["start_date"]} — {e["location"] or "TBD"}</p>'
+                '<p style="color:#64748b;font-size:13px">Please be prepared and on time.</p>'
+                '</div></div>'
+            )
+            send_email(e['email'], f'[OnTime] Reminder: {e["training_name"]} is Tomorrow!', html, force=True)
+            sent += 1
+        return jsonify({'ok': True, 'reminders_sent': sent})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 # ── Reports API ───────────────────────────────────────────────────────────────
 

@@ -285,6 +285,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='business-trips'?'active':''}" onclick="navigate('business-trips')">
           <span class="nav-icon">📍</span> Business Trips
         </button>
+        <button class="nav-item ${state.page==='training-catalog'?'active':''}" onclick="navigate('training-catalog')">
+          <span class="nav-icon">🎓</span> Training & Certs
+        </button>
         <button class="nav-item ${state.page==='reports'?'active':''}" onclick="navigate('reports')">
           <span class="nav-icon">📊</span> Reports
         </button>
@@ -3617,29 +3620,6 @@ async function renderHRTrips() {
   await loadHRTrips();
 }
 
-async function hrApproveTrip(tripId) {
-  if (!confirm('Approve this business trip?')) return;
-  const r = await api('POST', '/business-trips/approve', { id: tripId });
-  if (r.ok) {
-    showToast('success', 'Trip approved! Attendance marked.');
-    loadHRTrips();
-  } else {
-    showToast('error', r.data.error || 'Failed to approve');
-  }
-}
-
-async function hrRejectTrip(tripId) {
-  const reason = prompt('Rejection reason (optional):') ?? null;
-  if (reason === null) return; // cancelled
-  const r = await api('POST', '/business-trips/reject', { id: tripId, rejection_reason: reason });
-  if (r.ok) {
-    showToast('success', 'Trip rejected.');
-    loadHRTrips();
-  } else {
-    showToast('error', r.data.error || 'Failed to reject');
-  }
-}
-
 async function loadHRTrips() {
   const statusEl = document.getElementById('trip-status-filter');
   const status = statusEl ? statusEl.value : '';
@@ -3662,36 +3642,24 @@ async function loadHRTrips() {
           </tr>
         </thead>
         <tbody>
-          ${trips.length ? trips.map(t => {
-            const fmtDate = ds => {
-              if (!ds) return '—';
-              const d = new Date(ds);
-              return isNaN(d) ? ds : d.toLocaleDateString('id-ID', {day:'2-digit',month:'short',year:'numeric'});
-            };
-            const statusBadge = {
-              pending:   '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">⏳ Pending</span>',
-              approved:  '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">✅ Approved</span>',
-              rejected:  '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">❌ Rejected</span>',
-              completed: '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">✓ Completed</span>',
-            }[t.status] || '';
-            const actions = t.status === 'pending'
-              ? `<div style="display:flex;gap:6px">
-                   <button class="btn btn-sm btn-primary" onclick="hrApproveTrip(${t.id})">✅ Approve</button>
-                   <button class="btn btn-sm btn-danger" onclick="hrRejectTrip(${t.id})">❌ Reject</button>
-                 </div>`
-              : t.status === 'approved'
-              ? `<button class="btn btn-sm btn-ghost" onclick="showAdjustDatesModal('${t.id}')">Adjust</button>`
-              : '—';
-            return '<tr>'
-              + '<td><strong>' + t.name + '</strong><div style="font-size:11px;color:var(--text-s)">' + t.employee_id + '</div></td>'
-              + '<td>' + (t.department || '—') + '</td>'
-              + '<td>' + t.destination + '</td>'
-              + '<td style="font-size:12px;color:var(--text-s);white-space:nowrap">' + fmtDate(t.start_date) + ' → ' + fmtDate(t.end_date) + '</td>'
-              + '<td style="font-size:12px">' + t.purpose + '</td>'
-              + '<td>' + statusBadge + '</td>'
-              + '<td>' + actions + '</td>'
-              + '</tr>';
-          }).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div><p>No trips found</p></div></td></tr>'}
+          ${trips.length ? trips.map(t => `
+            <tr>
+              <td><strong>${t.name}</strong><div style="font-size: 11px; color: var(--text-s);">${t.employee_id}</div></td>
+              <td>${t.department || '—'}</td>
+              <td>${t.destination}</td>
+              <td style="font-size: 12px; color: var(--text-s);"><span class="font-mono">${t.start_date}</span> → <span class="font-mono">${t.end_date}</span></td>
+              <td style="font-size: 12px;">${t.purpose}</td>
+              <td>
+                ${t.status === 'pending' ? '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:3px;font-size:11px;">⏳ Pending</span>' : ''}
+                ${t.status === 'approved' ? '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:3px;font-size:11px;">✅ Approved</span>' : ''}
+                ${t.status === 'rejected' ? '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:3px;font-size:11px;">❌ Rejected</span>' : ''}
+                ${t.status === 'completed' ? '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:3px;font-size:11px;">✓ Completed</span>' : ''}
+              </td>
+              <td>
+                ${t.status === 'approved' ? `<button class="btn btn-sm btn-ghost" onclick="showAdjustDatesModal('${t.id}')">Adjust</button>` : ''}
+              </td>
+            </tr>
+          `).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div><p>No trips found</p></div></td></tr>'}
         </tbody>
       </table>
     </div>`;
@@ -4106,7 +4074,10 @@ async function renderTrainingManagement() {
     el.innerHTML = `
         <div class="page-header flex justify-between items-center">
             <div><h1>🎓 Training & Certifications</h1><p>Manage employee training programs</p></div>
-            <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
+            <div class="flex gap-2">
+                <button class="btn btn-secondary" onclick="sendTrainingReminders()">Send Reminders</button>
+                <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
+            </div>
         </div>
         <div id="training-list">Loading…</div>
     `;
@@ -4157,7 +4128,8 @@ async function loadTrainingList() {
                                             <td><span style="color:${statusColor};font-weight:600">${status}</span></td>
                                             <td>
                                                 <div class="flex gap-2">
-                                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
+                                                    <button class="btn btn-ghost btn-sm" onclick="showTrainingEnrollments(${t.id})">Enroll List</button>
+                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
                                                     <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >🗑️</button>
                                                 </div>
                                             </td>
@@ -4262,7 +4234,7 @@ async function showCreateTrainingModal() {
         }
         
         try {
-            await api('POST', '/training/create', {
+            const createR = await api('POST', '/training/create', {
                 name,
                 description: document.getElementById('train-desc').value,
                 start_date: startDate,
@@ -4278,6 +4250,7 @@ async function showCreateTrainingModal() {
             });
             
             showToast('success', `"${name}" training created!`);
+            if (createR.ok && createR.data && createR.data.id) { const nr = await api('POST', '/training/notify-targets', { training_id: createR.data.id }); if (nr.ok && nr.data.notified > 0) showToast('success', `${nr.data.notified} employee(s) notified.`); }
             await loadTrainingList();
         } catch (err) {
             showToast('error', 'Failed to create training');
@@ -4433,9 +4406,9 @@ async function renderTrainingCatalog() {
 
 async function loadCatalogTrainings() {
     try {
-        const r = await api('GET', '/training/available');
+        const [r, enrollR] = await Promise.all([api('GET', '/training/available'), api('GET', '/training/my-enrollments')]);
         const trainings = r.data || [];
-        
+        const enrollMap = {}; (enrollR.ok ? enrollR.data || [] : []).forEach(e => { enrollMap[e.training_id] = e; });
         if (trainings.length === 0) {
             document.getElementById('catalog-list').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings available at the moment.</div>';
             return;
@@ -5557,4 +5530,25 @@ async function renderCutiAdmin() {
   };
 
   await loadAndRender();
+}
+
+// Training notification functions
+async function acknowledgeTraining(enrollmentId) {
+  const r = await api('POST', '/training/acknowledge', { enrollment_id: enrollmentId });
+  if (r.ok) { showToast('success', 'Participation confirmed! HR notified.'); await loadCatalogTrainings(); }
+  else showToast('error', r.data.error || 'Failed to confirm');
+}
+
+async function showTrainingEnrollments(trainingId) {
+  const r = await api('GET', '/training/enrollments?training_id=' + trainingId);
+  const list = r.ok ? r.data || [] : [];
+  const rows = list.length ? list.map(e => '<tr><td>' + (e.user_name||'') + '</td><td>' + (e.status||'').replace(/_/g,' ') + '</td><td>' + (e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending') + '</td></tr>').join('') : '<tr><td colspan="3" style="text-align:center">No enrollments yet</td></tr>';
+  showModal('Enrollment Status', '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' + rows + '</tbody></table>');
+}
+
+async function sendTrainingReminders() {
+  if (!confirm('Send reminder emails to all employees with training tomorrow?')) return;
+  const r = await api('POST', '/training/send-reminders', {});
+  if (r.ok) showToast('success', r.data.reminders_sent + ' reminder(s) sent.');
+  else showToast('error', r.data.error || 'Failed');
 }
