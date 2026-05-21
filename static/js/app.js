@@ -104,7 +104,7 @@ function renderLogin() {
   <div class="auth-wrap">
     <div class="auth-hero">
       <div class="hero-logo">
-        <div class="hero-logo-icon"><img src="/static/ontime_logo.png" style="width:36px;height:36px;object-fit:contain;display:block" alt="OnTime" onerror="this.style.display='none'"></div>
+        <div class="hero-logo-icon">⏱</div>
         <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Track time.<br>Manage leave.<br><span>Stay in sync.</span></h1>
@@ -194,7 +194,7 @@ function renderForgot() {
   document.getElementById('app').innerHTML = `
     <div class="auth-hero">
       <div class="hero-logo">
-        <div class="hero-logo-icon"><img src="/static/ontime_logo.png" style="width:36px;height:36px;object-fit:contain;display:block" alt="OnTime" onerror="this.style.display='none'"></div>
+        <div class="hero-logo-icon">⏱</div>
         <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Reset your<br><span>password</span></h1>
@@ -229,7 +229,7 @@ function renderReset() {
   document.getElementById('app').innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
-      <div class="hero-logo"><div class="hero-logo-icon"><img src="/static/ontime_logo.png" style="width:36px;height:36px;object-fit:contain;display:block" alt="OnTime" onerror="this.style.display='none'"></div><div class="hero-logo-text">OnTime</div></div>
+      <div class="hero-logo"><div class="hero-logo-icon">⏱</div><div class="hero-logo-text">OnTime</div></div>
       <h1 class="hero-title">Set new<br><span>password</span></h1>
     </div>
     <div class="auth-panel">
@@ -268,7 +268,7 @@ function renderShell() {
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-logo">
-        <div class="sidebar-logo-icon" style="background:none;padding:0;box-shadow:none"><img src="/static/ontime_logo.png" style="width:32px;height:32px;object-fit:contain;display:block" alt="OnTime" onerror="this.style.display='none'"></div>
+        <div class="sidebar-logo-icon" style="background:none;padding:0;box-shadow:none">⏱</div>
         <div class="sidebar-logo-text">OnTime <span>Attendance & Leave</span></div>
       </div>
       <div class="sidebar-section">
@@ -2888,7 +2888,7 @@ async function downloadMyPDF() {
 
   printHTML(reportStyles() + `
     <div class="rpt-header">
-      <div class="rpt-logo"><img src="/static/ontime_logo.png" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;display:inline-block" alt="OnTime" onerror="this.style.display='none'"> OnTime</div>
+      <div class="rpt-logo">⏱ OnTime</div>
       <h1>Attendance & Leave Report</h1>
       <p>${state.user.name} · ${state.user.employee_id} · ${state.user.department||''}</p>
       <p class="period">${monthName}</p>
@@ -3026,7 +3026,7 @@ async function downloadTeamPDF() {
 
   printHTML(reportStyles() + `
     <div class="rpt-header">
-      <div class="rpt-logo"><img src="/static/ontime_logo.png" style="width:18px;height:18px;object-fit:contain;vertical-align:middle;display:inline-block" alt="OnTime" onerror="this.style.display='none'"> OnTime</div>
+      <div class="rpt-logo">⏱ OnTime</div>
       <h1>Attendance & Leave Report</h1>
       <p>${scope}</p>
       <p class="period">${monthName}</p>
@@ -3617,6 +3617,29 @@ async function renderHRTrips() {
   await loadHRTrips();
 }
 
+async function hrApproveTrip(tripId) {
+  if (!confirm('Approve this business trip?')) return;
+  const r = await api('POST', '/business-trips/approve', { id: tripId });
+  if (r.ok) {
+    showToast('success', 'Trip approved! Attendance marked.');
+    loadHRTrips();
+  } else {
+    showToast('error', r.data.error || 'Failed to approve');
+  }
+}
+
+async function hrRejectTrip(tripId) {
+  const reason = prompt('Rejection reason (optional):') ?? null;
+  if (reason === null) return; // cancelled
+  const r = await api('POST', '/business-trips/reject', { id: tripId, rejection_reason: reason });
+  if (r.ok) {
+    showToast('success', 'Trip rejected.');
+    loadHRTrips();
+  } else {
+    showToast('error', r.data.error || 'Failed to reject');
+  }
+}
+
 async function loadHRTrips() {
   const statusEl = document.getElementById('trip-status-filter');
   const status = statusEl ? statusEl.value : '';
@@ -3639,24 +3662,36 @@ async function loadHRTrips() {
           </tr>
         </thead>
         <tbody>
-          ${trips.length ? trips.map(t => `
-            <tr>
-              <td><strong>${t.name}</strong><div style="font-size: 11px; color: var(--text-s);">${t.employee_id}</div></td>
-              <td>${t.department || '—'}</td>
-              <td>${t.destination}</td>
-              <td style="font-size: 12px; color: var(--text-s);"><span class="font-mono">${t.start_date}</span> → <span class="font-mono">${t.end_date}</span></td>
-              <td style="font-size: 12px;">${t.purpose}</td>
-              <td>
-                ${t.status === 'pending' ? '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:3px;font-size:11px;">⏳ Pending</span>' : ''}
-                ${t.status === 'approved' ? '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:3px;font-size:11px;">✅ Approved</span>' : ''}
-                ${t.status === 'rejected' ? '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:3px;font-size:11px;">❌ Rejected</span>' : ''}
-                ${t.status === 'completed' ? '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:3px;font-size:11px;">✓ Completed</span>' : ''}
-              </td>
-              <td>
-                ${t.status === 'approved' ? `<button class="btn btn-sm btn-ghost" onclick="showAdjustDatesModal('${t.id}')">Adjust</button>` : ''}
-              </td>
-            </tr>
-          `).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div><p>No trips found</p></div></td></tr>'}
+          ${trips.length ? trips.map(t => {
+            const fmtDate = ds => {
+              if (!ds) return '—';
+              const d = new Date(ds);
+              return isNaN(d) ? ds : d.toLocaleDateString('id-ID', {day:'2-digit',month:'short',year:'numeric'});
+            };
+            const statusBadge = {
+              pending:   '<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">⏳ Pending</span>',
+              approved:  '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">✅ Approved</span>',
+              rejected:  '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">❌ Rejected</span>',
+              completed: '<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">✓ Completed</span>',
+            }[t.status] || '';
+            const actions = t.status === 'pending'
+              ? `<div style="display:flex;gap:6px">
+                   <button class="btn btn-sm btn-primary" onclick="hrApproveTrip(${t.id})">✅ Approve</button>
+                   <button class="btn btn-sm btn-danger" onclick="hrRejectTrip(${t.id})">❌ Reject</button>
+                 </div>`
+              : t.status === 'approved'
+              ? `<button class="btn btn-sm btn-ghost" onclick="showAdjustDatesModal('${t.id}')">Adjust</button>`
+              : '—';
+            return '<tr>'
+              + '<td><strong>' + t.name + '</strong><div style="font-size:11px;color:var(--text-s)">' + t.employee_id + '</div></td>'
+              + '<td>' + (t.department || '—') + '</td>'
+              + '<td>' + t.destination + '</td>'
+              + '<td style="font-size:12px;color:var(--text-s);white-space:nowrap">' + fmtDate(t.start_date) + ' → ' + fmtDate(t.end_date) + '</td>'
+              + '<td style="font-size:12px">' + t.purpose + '</td>'
+              + '<td>' + statusBadge + '</td>'
+              + '<td>' + actions + '</td>'
+              + '</tr>';
+          }).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="icon">📭</div><p>No trips found</p></div></td></tr>'}
         </tbody>
       </table>
     </div>`;
