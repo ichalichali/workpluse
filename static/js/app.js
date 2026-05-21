@@ -4074,10 +4074,7 @@ async function renderTrainingManagement() {
     el.innerHTML = `
         <div class="page-header flex justify-between items-center">
             <div><h1>🎓 Training & Certifications</h1><p>Manage employee training programs</p></div>
-            <div class="flex gap-2">
-                <button class="btn btn-secondary" onclick="sendTrainingReminders()">Send Reminders</button>
-                <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
-            </div>
+            <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
         </div>
         <div id="training-list">Loading…</div>
     `;
@@ -4206,6 +4203,15 @@ async function showCreateTrainingModal() {
                 <input type="checkbox" id="train-mandatory" style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer" />
                 <label for="train-mandatory" style="font-size:14px;cursor:pointer;margin:0"><strong>Mandatory Training</strong> - Employees must complete this training</label>
             </div>
+            <div style="display:flex;align-items:center;gap:12px">
+                <label style="font-size:13px;font-weight:600;color:#374151;white-space:nowrap;min-width:120px">Send Reminder</label>
+                <select id="train-reminder" style="flex:1;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px">
+                    <option value="">No reminder</option>
+                    <option value="1">1 day before</option>
+                    <option value="3">3 days before</option>
+                    <option value="5">5 days before</option>
+                </select>
+            </div>
         </div>
     `;
     
@@ -4246,7 +4252,8 @@ async function showCreateTrainingModal() {
                 target_department_id: targetDeptId,
                 target_role: targetRole,
                 target_user_ids_json: targetUserIds,
-                is_mandatory: document.getElementById('train-mandatory').checked
+                is_mandatory: document.getElementById('train-mandatory').checked,
+                reminder_days: document.getElementById('train-reminder') ? parseInt(document.getElementById('train-reminder').value) || 0 : 0
             });
             
             if (!createR.ok) { showToast('error', createR.data.error || 'Failed to create training'); return; }
@@ -5057,39 +5064,24 @@ function escapeHtml(text) {
 
 async function loadAnnouncementsDropdown() {
   if (state.user.role === 'hr_admin') return;
-  
   try {
     const [r, trainR] = await Promise.all([
       api('GET', '/announcements/all-for-employee'),
       api('GET', '/training/my-enrollments')
     ]);
     if (!r.ok) return;
-    
     const announcements = (r.data || []).slice(0, 5);
-    // Count pending training assignments (invited but not yet acknowledged)
     const pendingTrainings = (trainR.ok ? trainR.data || [] : []).filter(e => e.status === 'invited');
     const unreadCount = announcements.length + pendingTrainings.length;
-    
     state.currentAnnouncementCount = unreadCount;
-    state.pendingTrainings = pendingTrainings;
-    
     const lastSeenCount = parseInt(localStorage.getItem('lastSeenAnnouncementCount') || '0');
-    
     const badge = document.getElementById('announcement-badge');
-    if (unreadCount > lastSeenCount) {
-      badge.style.display = '';
-    } else {
-      badge.style.display = 'none';
-    }
-    
-    // Update dropdown list
+    if (badge) badge.style.display = unreadCount > lastSeenCount ? '' : 'none';
     const dropdownList = document.getElementById('announcements-list-dropdown');
-    
-    // Build training invitation cards (shown even if no announcements)
     const trainingHtml = pendingTrainings.map(e => `
       <div class="announcement-item" style="border-left:3px solid #7c3aed;background:#faf5ff">
         <div class="announcement-header" style="margin-bottom:6px">
-          <span class="priority-badge" style="background:#ede9fe;color:#5b21b6;font-size:11px">📚 Training</span>
+          <span class="priority-badge" style="background:#ede9fe;color:#5b21b6;font-size:11px">Training</span>
           <strong style="flex:1;font-size:13px">${escapeHtml(e.training_name || 'Training Program')}</strong>
         </div>
         <div class="announcement-body text-sm" style="color:#374151">
@@ -5097,27 +5089,21 @@ async function loadAnnouncementsDropdown() {
           Please check the Training Catalog to confirm your participation.
         </div>
         <div style="margin-top:8px">
-          <a href="#" onclick="navigate('training-catalog');toggleAnnouncementsDropdown();return false;" 
-             style="font-size:12px;color:#7c3aed;font-weight:600;text-decoration:none">
-            → Go to Training &amp; Certs
-          </a>
+          <a href="#" onclick="navigate('training-catalog');toggleAnnouncementsDropdown();return false;"
+             style="font-size:12px;color:#7c3aed;font-weight:600;text-decoration:none">→ Go to Training &amp; Certs</a>
         </div>
       </div>
     `).join('');
-    
     const announcementHtml = announcements.map(a => `
       <div class="announcement-item">
         <div class="announcement-header">
-          <span class="priority-badge" style="background: ${getPriorityColor(a.priority)};">
-            ${getPriorityEmoji(a.priority)}
-          </span>
-          <strong style="flex: 1;">${escapeHtml(a.title)}</strong>
+          <span class="priority-badge" style="background:${getPriorityColor(a.priority)}">${getPriorityEmoji(a.priority)}</span>
+          <strong style="flex:1">${escapeHtml(a.title)}</strong>
           <span class="text-xs text-muted">${new Date(a.expires_at).toLocaleDateString()}</span>
         </div>
         <div class="announcement-body text-sm">${escapeHtml(a.body.substring(0, 80))}...</div>
       </div>
     `).join('');
-    
     const combined = trainingHtml + announcementHtml;
     dropdownList.innerHTML = combined || '<p style="padding:1rem;color:var(--text-s);text-align:center">No new notifications</p>';
   } catch (e) {

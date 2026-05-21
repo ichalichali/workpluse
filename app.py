@@ -909,7 +909,7 @@ def notify_hr_ceo_leave(req_id):
         '<p style="color:#64748b;font-size:13px">No action required. This is for your records.</p>'
         '</div></div>'
     )
-    send_email(hr['email'], f"[Acknowledgement] CEO Leave: {dates_str}", html, force=True)
+    send_email(hr['email'], f"[Acknowledgement] CEO Leave: {dates_str}", html)
 
 def _row(row):
     """Convert RealDictRow to JSON-safe dict, serializing dates."""
@@ -3992,7 +3992,7 @@ def training_notify_targets():
                     f'<tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600">Location</td><td style="padding:10px">{training["location"] or "TBD"}</td></tr>'
                     f'<tr><td style="padding:10px;color:#64748b;font-weight:600">Mandatory</td><td style="padding:10px">{"Yes" if training["is_mandatory"] else "No"}</td></tr>'
                     '</table></div></div>')
-            send_email(user['email'], f'[OnTime] Training Assignment: {training["name"]}', html, force=True)
+            send_email(user['email'], f'[OnTime] Training Assignment: {training["name"]}', html)
             notified += 1
         conn.commit(); conn.close()
         return jsonify({'ok': True, 'notified': notified})
@@ -4023,7 +4023,7 @@ def acknowledge_training():
         if hr and emp:
             html = (f'<p><strong>{emp["name"]}</strong> has confirmed participation in <strong>{enrollment["training_name"]}</strong> ({enrollment["start_date"]} to {enrollment["end_date"]}).</p>'
                     '<p style="color:#64748b;font-size:13px">Automated notification from OnTime.</p>')
-            send_email(hr['email'], f'[OnTime] Training Confirmed: {emp["name"]} - {enrollment["training_name"]}', html, force=True)
+            send_email(hr['email'], f'[OnTime] Training Confirmed: {emp["name"]} - {enrollment["training_name"]}', html)
         log_audit(c, uid, 'training_acknowledged', entity_type='enrollment', entity_id=enrollment_id)
         conn.commit(); conn.close()
         return jsonify({'ok': True})
@@ -4052,7 +4052,7 @@ def send_training_reminders():
         sent = 0
         for e in enrollments:
             html = (f'<p>Hi <strong>{e["name"]}</strong>, reminder: your training <strong>{e["training_name"]}</strong> is tomorrow ({e["start_date"]}) at {e["location"] or "TBD"}.</p>')
-            send_email(e['email'], f'[OnTime] Reminder: {e["training_name"]} is Tomorrow!', html, force=True)
+            send_email(e['email'], f'[OnTime] Reminder: {e["training_name"]} is Tomorrow!', html)
             sent += 1
         return jsonify({'ok': True, 'reminders_sent': sent})
     except Exception as e:
