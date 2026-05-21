@@ -267,7 +267,7 @@ function renderShell() {
   document.getElementById('app').innerHTML = `
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="sidebar-logo" style="background:none;padding:0;box-shadow:none">
+      <div class="sidebar-logo" style="background:none">
         <div class="sidebar-logo-icon"><img src="/static/ontime_logo.png" style="width:32px;height:32px;object-fit:contain" alt="OnTime"></div>
         <div class="sidebar-logo-text">OnTime <span>Attendance & Leave</span></div>
       </div>
