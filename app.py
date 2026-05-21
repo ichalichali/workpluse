@@ -500,20 +500,15 @@ def init_db():
         
         # Seed 13 dates for 2026
         cuti_dates = [
-            ('2026-01-29', 'Isra & Miraj', 2026, 'annual'),
-            ('2026-02-10', 'Tahun Baru Imlek', 2026, 'annual'),
-            ('2026-03-16', 'Nyepi', 2026, 'annual'),
-            ('2026-05-01', 'Hari Buruh', 2026, 'annual'),
-            ('2026-05-26', 'Hari Raya (Lebaran)', 2026, 'annual'),
-            ('2026-05-27', 'Hari Raya (Lebaran)', 2026, 'annual'),
-            ('2026-06-01', 'Pancasila Day', 2026, 'annual'),
-            ('2026-06-04', 'Cuti Bersama Lebaran', 2026, 'annual'),
-            ('2026-06-05', 'Cuti Bersama Lebaran', 2026, 'annual'),
-            ('2026-08-17', 'Independence Day', 2026, 'annual'),
-            ('2026-09-16', 'Hari Raya (Haji)', 2026, 'annual'),
-            ('2026-12-25', 'Christmas Day', 2026, 'annual'),
-            ('2026-12-24', 'Cuti Bersama Natal', 2026, 'annual'),
-        ]
+                ('2026-02-16', 'Cuti Bersama Tahun Baru Imlek', 2026, 'annual'),
+                ('2026-03-18', 'Cuti Bersama Hari Suci Nyepi', 2026, 'annual'),
+                ('2026-03-20', 'Cuti Bersama Idulfitri', 2026, 'annual'),
+                ('2026-03-23', 'Cuti Bersama Idulfitri', 2026, 'annual'),
+                ('2026-03-24', 'Cuti Bersama Idulfitri', 2026, 'annual'),
+                ('2026-05-15', 'Cuti Bersama Kenaikan Yesus Kristus', 2026, 'annual'),
+                ('2026-05-28', 'Cuti Bersama Iduladha', 2026, 'annual'),
+                ('2026-12-24', 'Cuti Bersama Natal', 2026, 'annual'),
+            ]
         for date, name, year, dtype in cuti_dates:
             c.execute("""
                 INSERT INTO cuti_bersama (date, name, year, deduction_type)
@@ -532,16 +527,24 @@ def init_db():
         conn.rollback()
         sys.stderr.write(f"[init_db] R9 FAILED: {e}\n")
 
-    # R9 patch: fix Dec 24 cuti bersama (Dec 26 was Saturday, wrong date)
+    # R9 patch: replace all wrong cuti dates with official 2026 government schedule
     try:
-        c.execute("""
-            INSERT INTO cuti_bersama (date, name, year, deduction_type)
-            VALUES ('2026-12-24', 'Cuti Bersama Natal', 2026, 'annual')
-            ON CONFLICT DO NOTHING
-        """)
-        c.execute("""DELETE FROM cuti_bersama WHERE date='2026-12-26'""")
+        c.execute("DELETE FROM cuti_bersama WHERE year=2026")
+        official_dates = [
+            ('2026-02-16', 'Cuti Bersama Tahun Baru Imlek', 2026, 'annual'),
+            ('2026-03-18', 'Cuti Bersama Hari Suci Nyepi', 2026, 'annual'),
+            ('2026-03-20', 'Cuti Bersama Idulfitri', 2026, 'annual'),
+            ('2026-03-23', 'Cuti Bersama Idulfitri', 2026, 'annual'),
+            ('2026-03-24', 'Cuti Bersama Idulfitri', 2026, 'annual'),
+            ('2026-05-15', 'Cuti Bersama Kenaikan Yesus Kristus', 2026, 'annual'),
+            ('2026-05-28', 'Cuti Bersama Iduladha', 2026, 'annual'),
+            ('2026-12-24', 'Cuti Bersama Natal', 2026, 'annual'),
+        ]
+        for date, name, year, dtype in official_dates:
+            c.execute("INSERT INTO cuti_bersama (date, name, year, deduction_type) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                      (date, name, year, dtype))
         conn.commit()
-        sys.stderr.write("[init_db] R9 patch: Dec 24 cuti bersama fixed\n")
+        sys.stderr.write("[init_db] R9 patch: official 2026 cuti bersama (8 dates) applied\n")
         sys.stderr.flush()
     except Exception as e:
         conn.rollback()
@@ -2449,6 +2452,30 @@ def get_cuti_bersama():
     conn.close()
     result = [{'id': r['id'], 'date': str(r['date']), 'name': r['name'], 'year': r['year'], 'deduction_type': r['deduction_type']} for r in rows]
     return jsonify(result)
+
+@app.route('/api/cuti-bersama/save-year', methods=['POST'])
+def save_cuti_bersama_year():
+    err = require_login()
+    if err: return err
+    if session.get('role') != 'hr_admin': return jsonify({'error': 'HR Admin only'}), 403
+    data = request.get_json() or {}
+    year = data.get('year', 2026)
+    dates = data.get('dates', [])
+    conn = get_db(); c = conn.cursor()
+    try:
+        c.execute("DELETE FROM cuti_bersama WHERE year=%s", (year,))
+        for item in dates:
+            c.execute(
+                "INSERT INTO cuti_bersama (date, name, year, deduction_type) VALUES (%s,%s,%s,%s)",
+                (item['date'], item['name'], year, item.get('deduction_type','annual'))
+            )
+        log_audit(c, session['user_id'], 'cuti_bersama_updated',
+                  entity_type='cuti_bersama', after={'year': year, 'count': len(dates)})
+        conn.commit(); conn.close()
+        return jsonify({'ok': True, 'count': len(dates)})
+    except Exception as e:
+        conn.rollback(); conn.close()
+        return jsonify({'error': str(e)}), 500
 
 # ── Serve ─────────────────────────────────────────────────────────────────────
 @app.route('/setup-db-workpulse-2026')

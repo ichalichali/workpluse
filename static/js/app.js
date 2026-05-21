@@ -327,6 +327,9 @@ function renderShell() {
         <button class="nav-item ${state.page==='blackout-dates'?'active':''}" onclick="navigate('blackout-dates')">
           <span class="nav-icon">⛔</span> Blackout Dates
         </button>
+        <button class="nav-item ${state.page==='cuti-admin'?'active':''}" onclick="navigate('cuti-admin')">
+          <span class="nav-icon">🇮🇩</span> Cuti Bersama
+        </button>
         <button class="nav-item ${state.page==='deletion-requests'?'active':''}" onclick="navigate('deletion-requests')">
           <span class="nav-icon">🗑️</span> Deletion Requests
         </button>
@@ -405,6 +408,7 @@ async function loadPage() {
     case 'reports':                     return renderReports();
     case 'audit':                       return renderAudit();
     case 'blackout-dates':              return renderBlackoutDates();
+    case 'cuti-admin':                  return renderCutiAdmin();
     case 'pdp':                         return renderPDP();
 
     case 'business-trips':              return renderBusinessTrips();
@@ -5383,3 +5387,131 @@ function initAnnouncements() {
 // ════════════════════════════════════════════════════════════════════════════
 // END R10: ANNOUNCEMENTS DISPLAY FOR EMPLOYEES
 // ════════════════════════════════════════════════════════════════════════════
+// ── Cuti Bersama Admin ────────────────────────────────────────────────────────
+async function renderCutiAdmin() {
+  const el = document.getElementById('page-content');
+  let cutiYear = new Date().getFullYear();
+  let cutiMap = {}; // date -> name
+
+  async function loadAndRender() {
+    el.innerHTML = `<div class="page-header"><div><h1>🇮🇩 Cuti Bersama</h1><p>Kelola tanggal cuti bersama per tahun</p></div></div><div style="padding:24px;text-align:center;color:var(--text-s)">Loading…</div>`;
+    const r = await api('GET', `/cuti-bersama/list?year=${cutiYear}`);
+    cutiMap = {};
+    if (r.ok && Array.isArray(r.data)) {
+      r.data.forEach(d => { cutiMap[d.date] = d.name; });
+    }
+    renderPage();
+  }
+
+  function renderPage() {
+    const monthNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    const dayNames   = ['M','S','S','R','K','J','S'];
+
+    let calHtml = '';
+    for (let m = 0; m < 12; m++) {
+      const firstDay  = new Date(cutiYear, m, 1).getDay();
+      const daysInMon = new Date(cutiYear, m + 1, 0).getDate();
+      // rotate so Monday=0
+      const startOffset = (firstDay + 6) % 7;
+      let cells = '';
+      for (let i = 0; i < startOffset; i++) cells += '<div></div>';
+      for (let d = 1; d <= daysInMon; d++) {
+        const ds = `${cutiYear}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const dow = new Date(cutiYear, m, d).getDay();
+        const isWknd  = dow === 0 || dow === 6;
+        const isCuti  = !!cutiMap[ds];
+        let style = 'cursor:pointer;border-radius:6px;padding:4px 2px;font-size:12px;text-align:center;transition:all .15s;';
+        if (isWknd)       style += 'color:#94a3b8;cursor:default;';
+        else if (isCuti)  style += 'background:#7c3aed;color:#fff;font-weight:700;';
+        else              style += 'color:var(--text);';
+        const onclick = isWknd ? '' : `onclick="cutiToggle('${ds}')"`;
+        const title = isCuti ? `title="${cutiMap[ds]}"` : '';
+        cells += `<div style="${style}" ${onclick} ${title}>${d}</div>`;
+      }
+      calHtml += `
+        <div style="background:var(--surface-s,#fff);border:1px solid var(--border,#e2e8f0);border-radius:12px;padding:12px;">
+          <div style="font-weight:700;font-size:13px;color:var(--text);margin-bottom:8px;text-align:center">${monthNames[m]}</div>
+          <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;">
+            ${dayNames.map(d=>`<div style="font-size:10px;color:#94a3b8;text-align:center;font-weight:600">${d}</div>`).join('')}
+            ${cells}
+          </div>
+        </div>`;
+    }
+
+    // Right panel — selected dates list
+    const selected = Object.entries(cutiMap).sort(([a],[b])=>a.localeCompare(b));
+    const listHtml = selected.length ? selected.map(([ds, name]) => `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <span style="background:#ede9fe;color:#5b21b6;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;white-space:nowrap">${ds}</span>
+        <input value="${name}" onchange="cutiMap['${ds}']=this.value"
+          style="flex:1;border:1px solid #e2e8f0;border-radius:6px;padding:4px 8px;font-size:12px;background:transparent;color:var(--text)"/>
+        <button onclick="cutiRemove('${ds}')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;padding:0 4px;">×</button>
+      </div>`).join('') : '<p style="color:var(--text-s);font-size:13px">Belum ada tanggal dipilih. Klik tanggal di kalender untuk menambah.</p>';
+
+    el.innerHTML = `
+      <div class="page-header flex justify-between items-center">
+        <div><h1>🇮🇩 Cuti Bersama</h1><p>Klik tanggal untuk menambah/hapus. Edit nama lalu simpan.</p></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select onchange="cutiChangeYear(this.value)" style="border:1px solid #e2e8f0;border-radius:8px;padding:6px 12px;background:transparent;color:var(--text)">
+            ${[2025,2026,2027,2028].map(y=>`<option value="${y}" ${y===cutiYear?'selected':''}>${y}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary" onclick="cutiSave()">💾 Simpan</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start;margin-top:16px;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">${calHtml}</div>
+        <div style="background:var(--surface-s,#fff);border:1px solid var(--border,#e2e8f0);border-radius:12px;padding:16px;position:sticky;top:80px;">
+          <h3 style="margin:0 0 12px;font-size:14px;font-weight:700">📋 Tanggal Dipilih (${selected.length})</h3>
+          <div id="cuti-list">${listHtml}</div>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:12px;color:var(--text-s)">
+            <span style="display:inline-block;width:12px;height:12px;background:#7c3aed;border-radius:3px;margin-right:4px;vertical-align:middle"></span> Cuti Bersama &nbsp;
+            <span style="color:#94a3b8">Sabtu/Minggu tidak bisa dipilih</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  window.cutiMap = cutiMap;
+
+  window.cutiToggle = (ds) => {
+    if (cutiMap[ds]) {
+      delete cutiMap[ds];
+    } else {
+      // Auto-name based on nearby holiday or generic
+      const monthNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+      const d = new Date(ds);
+      cutiMap[ds] = `Cuti Bersama ${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+    }
+    renderPage();
+    window.cutiMap = cutiMap;
+  };
+
+  window.cutiRemove = (ds) => {
+    delete cutiMap[ds];
+    renderPage();
+    window.cutiMap = cutiMap;
+  };
+
+  window.cutiChangeYear = async (y) => {
+    cutiYear = parseInt(y);
+    await loadAndRender();
+    window.cutiMap = cutiMap;
+  };
+
+  window.cutiSave = async () => {
+    // Collect latest names from input fields
+    document.querySelectorAll('#cuti-list input').forEach(inp => {
+      const ds = inp.getAttribute('onchange').match(/'([^']+)'/)[1];
+      if (ds) cutiMap[ds] = inp.value;
+    });
+    const dates = Object.entries(cutiMap).map(([date, name]) => ({ date, name, deduction_type: 'annual' }));
+    const r = await api('POST', '/cuti-bersama/save-year', { year: cutiYear, dates });
+    if (r.ok) {
+      showToast('success', `✅ ${r.data.count} tanggal cuti bersama ${cutiYear} disimpan`);
+    } else {
+      showToast('error', r.data.error || 'Gagal menyimpan');
+    }
+  };
+
+  await loadAndRender();
+}
