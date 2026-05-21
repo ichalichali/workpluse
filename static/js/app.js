@@ -3787,17 +3787,17 @@ async function showAdjustDatesModal(tripId) {
 const MOTIVATIONAL_QUOTES = [
   // Indonesian quotes
   "Kesuksesan dimulai dari disiplin diri. Mulai dari sekarang! 💪",
-  "Jangan khawatir tentang kegagalan, khawatir tentang peluang yang terlewat.",
-  "Setiap hari adalah kesempatan baru untuk menjadi lebih baik. 🌟",
+  "Jangan khawatir tentang kegagalan, khawatir tentang peluang yang terlewat. Harus Ontime",
+  "Setiap hari adalah kesempatan baru untuk menjadi lebih baik. Ontime 🌟",
   "Kerja keras hari ini adalah kesuksesan besok. Terus maju! 🚀",
-  "Fokus pada apa yang bisa kamu kontrol, bukan pada apa yang tidak bisa.",
+  "Fokus pada apa yang bisa kamu kontrol, bukan pada apa yang tidak bisa. Tepat waktu adalah salah satu hal yang bisa kamu kontrol!",
   "Ketepatan waktu adalah bentuk penghormatan kepada diri sendiri dan tim.",
-  "Konsistensi adalah kunci untuk mencapai tujuan. Jangan putus semangat! 🔑",
+  "Konsistensi adalah kunci untuk mencapai tujuan. Jangan putus semangat! Belajar tempat waktu! 🔑",
   "Setiap hadir tepat waktu adalah kemenangan kecil menuju kesuksesan besar.",
   "Disiplin bukan hukuman, tapi investasi untuk masa depan yang lebih baik.",
-  "Mulai hari ini dengan tekad kuat untuk menjadi lebih baik. 💯",
+  "Mulai hari ini dengan tekad kuat untuk menjadi lebih baik. HARUS ONTIME! 💯",
   "Waktu adalah aset paling berharga. Hargai setiap detiknya.",
-  "Ketika kamu konsisten, hasil akan datang sendiri. Percaya pada proses! 🌱",
+  "Ketika kamu konsisten, hasil akan datang sendiri. Percaya pada proses, Berusaha tepat waktu! 🌱",
   "Setiap kegagalan adalah pelajaran menuju kesuksesan.",
   "Jangan menunda sampai besok apa yang bisa kamu lakukan hari ini.",
   "Kehadiran tepat waktu mencerminkan profesionalisme dan tanggung jawab.",
@@ -4085,7 +4085,7 @@ async function renderTrainingManagement() {
 async function loadTrainingList() {
     try {
         const r = await api('GET', '/training/list');
-        const trainings = (r.ok && Array.isArray(r.data)) ? r.data : [];
+        const trainings = r.data || [];
         
         const html = trainings.length === 0 
             ? '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings yet. Create one to get started!</div>'
@@ -4125,8 +4125,7 @@ async function loadTrainingList() {
                                             <td><span style="color:${statusColor};font-weight:600">${status}</span></td>
                                             <td>
                                                 <div class="flex gap-2">
-                                                    <button class="btn btn-ghost btn-sm" onclick="showTrainingEnrollments(${t.id})">Enrollments</button>
-                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
+                                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
                                                     <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >🗑️</button>
                                                 </div>
                                             </td>
@@ -4203,15 +4202,6 @@ async function showCreateTrainingModal() {
                 <input type="checkbox" id="train-mandatory" style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer" />
                 <label for="train-mandatory" style="font-size:14px;cursor:pointer;margin:0"><strong>Mandatory Training</strong> - Employees must complete this training</label>
             </div>
-            <div style="display:flex;align-items:center;gap:12px">
-                <label style="font-size:13px;font-weight:600;color:#374151;white-space:nowrap;min-width:120px">Send Reminder</label>
-                <select id="train-reminder" style="flex:1;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px">
-                    <option value="">No reminder</option>
-                    <option value="1">1 day before</option>
-                    <option value="3">3 days before</option>
-                    <option value="5">5 days before</option>
-                </select>
-            </div>
         </div>
     `;
     
@@ -4240,7 +4230,7 @@ async function showCreateTrainingModal() {
         }
         
         try {
-            const createR = await api('POST', '/training/create', {
+            await api('POST', '/training/create', {
                 name,
                 description: document.getElementById('train-desc').value,
                 start_date: startDate,
@@ -4252,17 +4242,10 @@ async function showCreateTrainingModal() {
                 target_department_id: targetDeptId,
                 target_role: targetRole,
                 target_user_ids_json: targetUserIds,
-                is_mandatory: document.getElementById('train-mandatory').checked,
-                reminder_days: document.getElementById('train-reminder') ? parseInt(document.getElementById('train-reminder').value) || 0 : 0
+                is_mandatory: document.getElementById('train-mandatory').checked
             });
             
-            if (!createR.ok) { showToast('error', createR.data.error || 'Failed to create training'); return; }
             showToast('success', `"${name}" training created!`);
-            if (createR.data && createR.data.id) {
-                const nr = await api('POST', '/training/notify-targets', { training_id: createR.data.id });
-                if (nr.ok) showToast('success', nr.data.notified > 0 ? `${nr.data.notified} employee(s) notified by email.` : 'Training created (no targets to notify).');
-                else showToast('error', 'Training saved but notifications failed: ' + (nr.data.error||''));
-            }
             await loadTrainingList();
         } catch (err) {
             showToast('error', 'Failed to create training');
@@ -4418,17 +4401,9 @@ async function renderTrainingCatalog() {
 
 async function loadCatalogTrainings() {
     try {
-        const [r, enrollR] = await Promise.all([api('GET', '/training/available'), api('GET', '/training/my-enrollments')]);
+        const r = await api('GET', '/training/available');
         const trainings = r.data || [];
-        const enrollMap = {};
-        (enrollR.ok ? enrollR.data || [] : []).forEach(e => { enrollMap[String(e.training_id)] = e; });
-        const getEnrollBtn = (t) => {
-            const e = enrollMap[String(t.id)];
-            if (!e) return '<button class="btn btn-primary" style="width:100%" onclick="enrollTraining(' + t.id + ',\'' + t.name.replace(/\'/g,"\\\\'") + '\')">' + 'Enroll Now</button>';
-            if (e.status === 'invited') return '<div><button id="ack-btn-' + e.id + '" class="btn btn-primary" style="width:100%;background:#7c3aed" onclick="acknowledgeTraining(' + e.id + ', this)">Confirm Participation</button><p style="font-size:11px;color:#7c3aed;margin:6px 0 0;text-align:center">You have been assigned to this training</p></div>';
-            if (e.status === 'acknowledged') return '<button class="btn" style="width:100%;background:#dcfce7;color:#15803d;cursor:default">Participation Confirmed</button>';
-            return '<button class="btn" style="width:100%;background:#f1f5f9;color:#64748b;cursor:default">' + (e.status||'').replace(/_/g,' ') + '</button>';
-        };
+        
         if (trainings.length === 0) {
             document.getElementById('catalog-list').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings available at the moment.</div>';
             return;
@@ -4455,7 +4430,7 @@ async function loadCatalogTrainings() {
                         </div>
                         
                         <div style="padding:16px">
-                            ${getEnrollBtn(t)}
+                            <button class="btn btn-primary" style="width:100%" onclick="enrollTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >Enroll Now →</button>
                         </div>
                     </div>
                 `).join('')}
@@ -5063,49 +5038,50 @@ function escapeHtml(text) {
 // ════════════════════════════════════════════════════════════════════════════
 
 async function loadAnnouncementsDropdown() {
-  if (state.user.role === 'hr_admin') return;
+  if (state.user.role === 'hr_admin') return; // HR sees manage page instead
+  
   try {
-    const [r, trainR] = await Promise.all([
-      api('GET', '/announcements/all-for-employee'),
-      api('GET', '/training/my-enrollments')
-    ]);
+    const r = await api('GET', '/announcements/all-for-employee');
     if (!r.ok) return;
-    const announcements = (r.data || []).slice(0, 5);
-    const pendingTrainings = (trainR.ok ? trainR.data || [] : []).filter(e => e.status === 'invited');
-    const unreadCount = announcements.length + pendingTrainings.length;
+    
+    const announcements = (r.data || []).slice(0, 5); // Get 5 latest
+    const unreadCount = announcements.length;
+    
+    // Store current count globally for use when opening modal
     state.currentAnnouncementCount = unreadCount;
+    
+    // Get last seen count from localStorage
     const lastSeenCount = parseInt(localStorage.getItem('lastSeenAnnouncementCount') || '0');
+    
+    // Update badge (SVG circle - only show if there are NEW announcements since last seen)
     const badge = document.getElementById('announcement-badge');
-    if (badge) badge.style.display = unreadCount > lastSeenCount ? '' : 'none';
+    if (unreadCount > lastSeenCount) {
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+    
+    // Update dropdown list
     const dropdownList = document.getElementById('announcements-list-dropdown');
-    const trainingHtml = pendingTrainings.map(e => `
-      <div class="announcement-item" style="border-left:3px solid #7c3aed;background:#faf5ff">
-        <div class="announcement-header" style="margin-bottom:6px">
-          <span class="priority-badge" style="background:#ede9fe;color:#5b21b6;font-size:11px">Training</span>
-          <strong style="flex:1;font-size:13px">${escapeHtml(e.training_name || 'Training Program')}</strong>
-        </div>
-        <div class="announcement-body text-sm" style="color:#374151">
-          A training has been assigned to <strong>${escapeHtml(state.user.name || 'you')}</strong>.
-          Please check the Training Catalog to confirm your participation.
-        </div>
-        <div style="margin-top:8px">
-          <a href="#" onclick="navigate('training-catalog');toggleAnnouncementsDropdown();return false;"
-             style="font-size:12px;color:#7c3aed;font-weight:600;text-decoration:none">→ Go to Training &amp; Certs</a>
-        </div>
-      </div>
-    `).join('');
-    const announcementHtml = announcements.map(a => `
+    if (announcements.length === 0) {
+      dropdownList.innerHTML = '<p style="padding: 1rem; color: var(--text-s); text-align: center;">No announcements</p>';
+      return;
+    }
+    
+    const html = announcements.map(a => `
       <div class="announcement-item">
         <div class="announcement-header">
-          <span class="priority-badge" style="background:${getPriorityColor(a.priority)}">${getPriorityEmoji(a.priority)}</span>
-          <strong style="flex:1">${escapeHtml(a.title)}</strong>
+          <span class="priority-badge" style="background: ${getPriorityColor(a.priority)};">
+            ${getPriorityEmoji(a.priority)}
+          </span>
+          <strong style="flex: 1;">${escapeHtml(a.title)}</strong>
           <span class="text-xs text-muted">${new Date(a.expires_at).toLocaleDateString()}</span>
         </div>
         <div class="announcement-body text-sm">${escapeHtml(a.body.substring(0, 80))}...</div>
       </div>
     `).join('');
-    const combined = trainingHtml + announcementHtml;
-    dropdownList.innerHTML = combined || '<p style="padding:1rem;color:var(--text-s);text-align:center">No new notifications</p>';
+    
+    dropdownList.innerHTML = html;
   } catch (e) {
     console.error('Error loading announcements:', e);
   }
@@ -5247,170 +5223,7 @@ function escapeHtml(text) {
 // CSS STYLES FOR ANNOUNCEMENTS
 // ════════════════════════════════════════════════════════════════════════════
 
-const announcementsStyles = `
-.navbar-header {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 1rem;
-  border-bottom: 1px solid var(--surface-s);
-  gap: 1rem;
-  position: relative;
-}
-
-.navbar-spacer {
-  flex: 1;
-}
-
-.navbar-bell {
-  position: relative;
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  cursor: pointer;
-  padding: 0.5rem;
-  transition: transform 0.2s;
-}
-
-.navbar-bell:hover {
-  transform: scale(1.1);
-}
-
-.badge {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  background: #ff4757;
-  border-radius: 50%;
-  width: 20px;
-  height: 20px;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: white;
-  box-shadow: 0 2px 6px rgba(255, 71, 87, 0.5);
-  border: 2px solid white;
-  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  line-height: 1.2;
-}
-
-@keyframes badgePulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
-}
-
-.announcements-dropdown {
-  position: absolute;
-  top: 3.5rem;
-  right: 1rem;
-  background: white;
-  border: 1px solid var(--surface-s);
-  border-radius: 0.5rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  min-width: 350px;
-  z-index: 1000;
-}
-
-.dropdown-header {
-  padding: 1rem;
-  border-bottom: 1px solid var(--surface-s);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.announcement-item {
-  padding: 1rem;
-  border-bottom: 1px solid var(--surface-s);
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.announcement-item:hover {
-  background: var(--surface-s);
-}
-
-.announcement-item:last-child {
-  border-bottom: none;
-}
-
-.announcement-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.priority-badge {
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.875rem;
-  flex-shrink: 0;
-}
-
-.announcement-body {
-  color: var(--text-s);
-}
-
-.dropdown-footer {
-  padding: 1rem;
-  border-top: 1px solid var(--surface-s);
-  text-align: center;
-}
-
-.announcement-card {
-  background: white;
-  border: 1px solid var(--surface-s);
-  border-radius: 0.5rem;
-  padding: 1.5rem;
-  margin-bottom: 1rem;
-}
-
-.announcement-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 1rem;
-}
-
-.announcement-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.filters {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.text-xs {
-  font-size: 0.75rem;
-}
-
-.text-sm {
-  font-size: 0.875rem;
-}
-
-.text-muted {
-  color: var(--text-s);
-}
-
-.mb-4 {
-  margin-bottom: 1rem;
-}
-`;
-
-// Inject styles
-if (!document.getElementById('announcements-styles')) {
-  const style = document.createElement('style');
-  style.id = 'announcements-styles';
-  style.textContent = announcementsStyles;
-  document.head.appendChild(style);
-}
+// Announcement styles moved to style.css
 
 // Initialize announcements on page load
 function initAnnouncements() {
@@ -5549,55 +5362,4 @@ async function renderCutiAdmin() {
   };
 
   await loadAndRender();
-}
-// ── Training: Acknowledge + Enrollment functions ─────────────────────────────
-async function acknowledgeTraining(enrollmentId, btn) {
-  // Immediately disable button to prevent double-click
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Confirming...';
-    btn.style.background = '#94a3b8';
-  }
-  const r = await api('POST', '/training/acknowledge', { enrollment_id: enrollmentId });
-  if (r.ok) {
-    // Replace button with confirmed state
-    if (btn && btn.parentElement) {
-      btn.parentElement.innerHTML =
-        '<button class="btn" style="width:100%;background:#dcfce7;color:#15803d;cursor:default;font-weight:600">' +
-        'Participation Confirmed</button>' +
-        '<p style="font-size:11px;color:#15803d;margin:6px 0 0;text-align:center">HR and your manager have been notified</p>';
-    }
-    showToast('success', 'Participation confirmed! HR and your manager have been notified.');
-    await loadAnnouncementsDropdown();
-  } else {
-    // Re-enable on error
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Confirm Participation';
-      btn.style.background = '#7c3aed';
-    }
-    showToast('error', r.data.error || 'Failed to confirm participation');
-  }
-}
-
-async function showTrainingEnrollments(trainingId) {
-  const r = await api('GET', '/training/enrollments?training_id=' + trainingId);
-  const list = r.ok ? r.data || [] : [];
-  const rows = list.length
-    ? list.map(e =>
-        '<tr><td>' + (e.user_name||'') + '</td>' +
-        '<td>' + (e.status||'').replace(/_/g,' ') + '</td>' +
-        '<td>' + (e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending') + '</td></tr>'
-      ).join('')
-    : '<tr><td colspan="3" style="text-align:center;padding:12px;color:#64748b">No enrollments yet</td></tr>';
-  showModal('Enrollment Status',
-    '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' +
-    rows + '</tbody></table>');
-}
-
-async function sendTrainingReminders() {
-  if (!confirm('Send reminder emails to all employees with training tomorrow?')) return;
-  const r = await api('POST', '/training/send-reminders', {});
-  if (r.ok) showToast('success', r.data.reminders_sent + ' reminder(s) sent.');
-  else showToast('error', r.data.error || 'Failed to send reminders');
 }
