@@ -4074,7 +4074,10 @@ async function renderTrainingManagement() {
     el.innerHTML = `
         <div class="page-header flex justify-between items-center">
             <div><h1>🎓 Training & Certifications</h1><p>Manage employee training programs</p></div>
-            <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
+            <div class="flex gap-2">
+                <button class="btn btn-secondary" onclick="sendTrainingReminders()">Send Reminders</button>
+                <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
+            </div>
         </div>
         <div id="training-list">Loading…</div>
     `;
@@ -4085,7 +4088,7 @@ async function renderTrainingManagement() {
 async function loadTrainingList() {
     try {
         const r = await api('GET', '/training/list');
-        const trainings = r.data || [];
+        const trainings = (r.ok && Array.isArray(r.data)) ? r.data : [];
         
         const html = trainings.length === 0 
             ? '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings yet. Create one to get started!</div>'
@@ -4125,7 +4128,8 @@ async function loadTrainingList() {
                                             <td><span style="color:${statusColor};font-weight:600">${status}</span></td>
                                             <td>
                                                 <div class="flex gap-2">
-                                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
+                                                    <button class="btn btn-ghost btn-sm" onclick="showTrainingEnrollments(${t.id})">Enrollments</button>
+                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
                                                     <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >🗑️</button>
                                                 </div>
                                             </td>
@@ -4403,9 +4407,16 @@ async function renderTrainingCatalog() {
 
 async function loadCatalogTrainings() {
     try {
-        const r = await api('GET', '/training/available');
+        const [r, enrollR] = await Promise.all([api('GET', '/training/available'), api('GET', '/training/my-enrollments')]);
         const trainings = r.data || [];
-        
+        const enrollMap = {}; (enrollR.ok ? enrollR.data || [] : []).forEach(e => { enrollMap[e.training_id] = e; });
+        const getEnrollBtn = (t) => {
+            const e = enrollMap[t.id];
+            if (!e) return '<button class="btn btn-primary" style="width:100%" onclick="enrollTraining(' + t.id + ',\'' + t.name.replace(/\'/g,"\\\\'") + '\')">' + 'Enroll Now</button>';
+            if (e.status === 'invited') return '<div><button class="btn btn-primary" style="width:100%;background:#7c3aed" onclick="acknowledgeTraining(' + e.id + ')">Confirm Participation</button><p style="font-size:11px;color:#7c3aed;margin:6px 0 0;text-align:center">You have been assigned to this training</p></div>';
+            if (e.status === 'acknowledged') return '<button class="btn" style="width:100%;background:#dcfce7;color:#15803d;cursor:default">Participation Confirmed</button>';
+            return '<button class="btn" style="width:100%;background:#f1f5f9;color:#64748b;cursor:default">' + e.status.replace(/_/g,' ') + '</button>';
+        };
         if (trainings.length === 0) {
             document.getElementById('catalog-list').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings available at the moment.</div>';
             return;
@@ -4432,7 +4443,7 @@ async function loadCatalogTrainings() {
                         </div>
                         
                         <div style="padding:16px">
-                            <button class="btn btn-primary" style="width:100%" onclick="enrollTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >Enroll Now →</button>
+                            ${getEnrollBtn(t)}
                         </div>
                     </div>
                 `).join('')}
@@ -5527,4 +5538,25 @@ async function renderCutiAdmin() {
   };
 
   await loadAndRender();
+}
+
+// Training notification/acknowledgement functions
+async function acknowledgeTraining(enrollmentId) {
+  const r = await api('POST', '/training/acknowledge', { enrollment_id: enrollmentId });
+  if (r.ok) { showToast('success', 'Participation confirmed! HR has been notified.'); await loadCatalogTrainings(); }
+  else showToast('error', r.data.error || 'Failed to confirm');
+}
+
+async function showTrainingEnrollments(trainingId) {
+  const r = await api('GET', '/training/enrollments?training_id=' + trainingId);
+  const list = r.ok ? r.data || [] : [];
+  const rows = list.length ? list.map(e => '<tr><td>' + (e.user_name||'') + '</td><td>' + (e.status||'').replace(/_/g,' ') + '</td><td>' + (e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending') + '</td></tr>').join('') : '<tr><td colspan="3" style="text-align:center">No enrollments yet</td></tr>';
+  showModal('Enrollment Status', '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' + rows + '</tbody></table>');
+}
+
+async function sendTrainingReminders() {
+  if (!confirm('Send reminder emails to all employees with training tomorrow?')) return;
+  const r = await api('POST', '/training/send-reminders', {});
+  if (r.ok) showToast('success', r.data.reminders_sent + ' reminder(s) sent.');
+  else showToast('error', r.data.error || 'Failed');
 }

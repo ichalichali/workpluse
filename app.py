@@ -911,6 +911,15 @@ def notify_hr_ceo_leave(req_id):
     )
     send_email(hr['email'], f"[Acknowledgement] CEO Leave: {dates_str}", html, force=True)
 
+def _row(row):
+    """Convert RealDictRow to JSON-safe dict, serializing dates."""
+    d = dict(row)
+    for k, v in list(d.items()):
+        if hasattr(v, "isoformat"):
+            d[k] = v.isoformat()
+    return d
+
+
 def require_login():
     if 'user_id' not in session: return jsonify({'error':'Unauthorized'}),401
     return None
@@ -3282,24 +3291,8 @@ def list_trainings():
         ORDER BY start_date DESC
     """)
     rows = c.fetchall()
-    result = []
-    for row in rows:
-        result.append({
-            'id': row[0],
-            'name': row[1],
-            'description': row[2],
-            'issuer': row[3],
-            'is_mandatory': row[4],
-            'category': row[5],
-            'start_date': row[6].isoformat() if row[6] else None,
-            'end_date': row[7].isoformat() if row[7] else None,
-            'location': row[8],
-            'target_type': row[9],
-            'created_by': row[10],
-            'created_at': row[11].isoformat() if row[11] else None
-        })
     conn.close()
-    return jsonify(result)
+    return jsonify([_row(r) for r in rows])
 
 @app.route('/api/training/<int:training_id>', methods=['GET'])
 def get_training(training_id):
@@ -3314,23 +3307,7 @@ def get_training(training_id):
     
     if not row:
         return {'error': 'Training not found'}, 404
-    
-    return jsonify({
-        'id': row[0],
-        'name': row[1],
-        'description': row[2],
-        'issuer': row[3],
-        'is_mandatory': row[4],
-        'category': row[5],
-        'start_date': row[6].isoformat() if row[6] else None,
-        'end_date': row[7].isoformat() if row[7] else None,
-        'location': row[8],
-        'target_type': row[9],
-        'target_department_id': row[10],
-        'target_role': row[11],
-        'target_user_ids_json': row[12],
-        'created_by': row[13]
-    })
+    return jsonify(_row(row))
 
 @app.route('/api/training/<int:training_id>', methods=['PUT'])
 def update_training(training_id):
@@ -3412,36 +3389,25 @@ def get_available_trainings():
     conn = get_db()
     c = conn.cursor()
     
-    # Get trainings where target matches user
+    # Get trainings where target matches user OR user has an enrollment
     c.execute("""
-        SELECT id, name, description, issuer, is_mandatory, category, start_date, end_date, location
-        FROM trainings
+        SELECT DISTINCT t.id, t.name, t.description, t.issuer, t.is_mandatory,
+               t.category, t.start_date, t.end_date, t.location
+        FROM trainings t
+        LEFT JOIN training_enrollments te ON te.training_id = t.id AND te.user_id = %s
         WHERE (
-            target_type = 'all' OR
-            (target_type = 'role' AND target_role = %s) OR
-            (target_type = 'department' AND target_department_id = %s) OR
-            (target_type = 'user' AND target_user_ids_json::jsonb @> %s)
+            t.target_type = 'all' OR
+            (t.target_type = 'role' AND t.target_role = %s) OR
+            (t.target_type = 'department' AND t.target_department_id = %s) OR
+            (t.target_type = 'user' AND t.target_user_ids_json::jsonb @> %s) OR
+            te.id IS NOT NULL
         )
-        AND start_date >= CURRENT_DATE
-        ORDER BY start_date ASC
-    """, (user_role, user_dept, json.dumps([user_id])))
-    
+        AND t.end_date >= CURRENT_DATE
+        ORDER BY t.start_date ASC
+    """, (user_id, user_role, user_dept, json.dumps([user_id])))
     rows = c.fetchall()
-    result = []
-    for row in rows:
-        result.append({
-            'id': row[0],
-            'name': row[1],
-            'description': row[2],
-            'issuer': row[3],
-            'is_mandatory': row[4],
-            'category': row[5],
-            'start_date': row[6].isoformat() if row[6] else None,
-            'end_date': row[7].isoformat() if row[7] else None,
-            'location': row[8]
-        })
     conn.close()
-    return jsonify(result)
+    return jsonify([_row(r) for r in rows])
 
 # ── Training Enrollments ──────────────────────────────────────────────────────
 
@@ -3527,20 +3493,8 @@ def get_my_enrollments():
     """, (user_id,))
     
     rows = c.fetchall()
-    result = []
-    for row in rows:
-        result.append({
-            'id': row[0],
-            'training_id': row[1],
-            'training_name': row[2],
-            'status': row[3],
-            'enrolled_at': row[4].isoformat() if row[4] else None,
-            'manager_approved': row[5],
-            'start_date': row[6].isoformat() if row[6] else None,
-            'end_date': row[7].isoformat() if row[7] else None
-        })
     conn.close()
-    return jsonify(result)
+    return jsonify([_row(r) for r in rows])
 
 @app.route('/api/training/enrollments', methods=['GET'])
 def get_enrollments():
@@ -3573,19 +3527,8 @@ def get_enrollments():
         """, (status_filter,))
     
     rows = c.fetchall()
-    result = []
-    for row in rows:
-        result.append({
-            'id': row[0],
-            'user_id': row[1],
-            'user_name': row[2],
-            'training_id': row[3],
-            'training_name': row[4],
-            'status': row[5],
-            'enrolled_at': row[6].isoformat() if row[6] else None
-        })
     conn.close()
-    return jsonify(result)
+    return jsonify([_row(r) for r in rows])
 
 @app.route('/api/training/enroll/<int:enroll_id>/approve', methods=['POST'])
 def approve_enrollment(enroll_id):
@@ -3604,12 +3547,12 @@ def approve_enrollment(enroll_id):
             conn.close()
             return {'error': 'Enrollment not found'}, 404
         
-        user_id, training_id = enroll
+        user_id = enroll["user_id"]; training_id = enroll["training_id"]
         
         # Get training dates
         c.execute("SELECT start_date, end_date, name FROM trainings WHERE id=%s", (training_id,))
         train = c.fetchone()
-        start_date, end_date, training_name = train
+        start_date = train["start_date"]; end_date = train["end_date"]; training_name = train["name"]
         
         # Update enrollment
         c.execute("""
@@ -3785,18 +3728,7 @@ def get_my_certificates():
     rows = c.fetchall()
     result = []
     for row in rows:
-        days_to_expiry = (row[4] - date.today()).days if row[4] else None
-        result.append({
-            'id': row[0],
-            'training_name': row[1],
-            'certificate_number': row[2],
-            'issued_date': row[3].isoformat() if row[3] else None,
-            'expiry_date': row[4].isoformat() if row[4] else None,
-            'issuer_name': row[5],
-            'status': row[6],
-            'days_to_expiry': days_to_expiry,
-            'created_at': row[7].isoformat() if row[7] else None
-        })
+        r = _row(row); r['days_to_expiry'] = (row['expiry_date'] - date.today()).days if row['expiry_date'] else None; result.append(r)
     conn.close()
     return jsonify(result)
 
@@ -3831,18 +3763,7 @@ def get_certificates():
     rows = c.fetchall()
     result = []
     for row in rows:
-        days_to_expiry = (row[6] - date.today()).days if row[6] else None
-        result.append({
-            'id': row[0],
-            'user_id': row[1],
-            'user_name': row[2],
-            'training_name': row[3],
-            'certificate_number': row[4],
-            'issued_date': row[5].isoformat() if row[5] else None,
-            'expiry_date': row[6].isoformat() if row[6] else None,
-            'status': row[7],
-            'days_to_expiry': days_to_expiry
-        })
+        r = _row(row); r['days_to_expiry'] = (row['expiry_date'] - date.today()).days if row['expiry_date'] else None; result.append(r)
     conn.close()
     return jsonify(result)
 
@@ -3869,14 +3790,7 @@ def get_expiring_certificates():
     result = []
     for row in rows:
         result.append({
-            'id': row[0],
-            'user_id': row[1],
-            'user_email': row[2],
-            'user_name': row[3],
-            'training_name': row[4],
-            'certificate_number': row[5],
-            'expiry_date': row[6].isoformat() if row[6] else None,
-            'manager_email': row[7]
+            **_row(row)
         })
     conn.close()
     return jsonify(result)
@@ -4032,6 +3946,118 @@ def get_training_dashboard():
         'compliant_employees': compliant,
         'compliance_rate': round(compliance_rate, 1)
     })
+
+
+@app.route('/api/training/notify-targets', methods=['POST'])
+def training_notify_targets():
+    err = require_login()
+    if err: return err
+    if session.get('role') not in ('hr_admin', 'manager'): return jsonify({'error': 'Unauthorized'}), 403
+    data = request.get_json() or {}
+    training_id = data.get('training_id')
+    if not training_id: return jsonify({'error': 'training_id required'}), 400
+    conn = get_db(); c = conn.cursor()
+    try:
+        c.execute("SELECT * FROM trainings WHERE id=%s", (training_id,))
+        training = c.fetchone()
+        if not training: return jsonify({'error': 'Training not found'}), 404
+        target_type = training['target_type']
+        target_users = []
+        if target_type == 'all':
+            c.execute("SELECT id, name, email FROM users WHERE deleted_at IS NULL")
+            target_users = c.fetchall()
+        elif target_type == 'department' and training['target_department_id']:
+            c.execute("SELECT id, name, email FROM users WHERE branch_id=%s AND deleted_at IS NULL", (training['target_department_id'],))
+            target_users = c.fetchall()
+        elif target_type == 'role' and training['target_role']:
+            c.execute("SELECT id, name, email FROM users WHERE role=%s AND deleted_at IS NULL", (training['target_role'],))
+            target_users = c.fetchall()
+        elif target_type == 'user' and training['target_user_ids_json']:
+            user_ids = json.loads(training['target_user_ids_json'])
+            if user_ids:
+                placeholders = ','.join(['%s'] * len(user_ids))
+                c.execute(f"SELECT id, name, email FROM users WHERE id IN ({placeholders}) AND deleted_at IS NULL", user_ids)
+                target_users = c.fetchall()
+        notified = 0
+        for user in target_users:
+            c.execute("INSERT INTO training_enrollments (user_id, training_id, status) VALUES (%s, %s, 'invited') ON CONFLICT (user_id, training_id) DO NOTHING", (user['id'], training_id))
+            html = ('<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">'
+                    '<div style="background:#0f1f3d;padding:20px 24px"><h2 style="color:white;margin:0">OnTime - Training Assignment</h2></div>'
+                    '<div style="padding:24px">'
+                    f'<p>Hi <strong>{user["name"]}</strong>,</p>'
+                    '<p>You have been assigned to a training. Please log in to <strong>OnTime</strong> and go to <strong>Training & Certs</strong> to confirm your participation.</p>'
+                    '<table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">'
+                    f'<tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600;width:140px">Training</td><td style="padding:10px"><strong>{training["name"]}</strong></td></tr>'
+                    f'<tr><td style="padding:10px;color:#64748b;font-weight:600">Dates</td><td style="padding:10px">{training["start_date"]} to {training["end_date"]}</td></tr>'
+                    f'<tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600">Location</td><td style="padding:10px">{training["location"] or "TBD"}</td></tr>'
+                    f'<tr><td style="padding:10px;color:#64748b;font-weight:600">Mandatory</td><td style="padding:10px">{"Yes" if training["is_mandatory"] else "No"}</td></tr>'
+                    '</table></div></div>')
+            send_email(user['email'], f'[OnTime] Training Assignment: {training["name"]}', html, force=True)
+            notified += 1
+        conn.commit(); conn.close()
+        return jsonify({'ok': True, 'notified': notified})
+    except Exception as e:
+        conn.rollback(); conn.close()
+        sys.stderr.write(f"[training_notify_targets] {e}\n")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/training/acknowledge', methods=['POST'])
+def acknowledge_training():
+    err = require_login()
+    if err: return err
+    uid = session['user_id']
+    data = request.get_json() or {}
+    enrollment_id = data.get('enrollment_id')
+    if not enrollment_id: return jsonify({'error': 'enrollment_id required'}), 400
+    conn = get_db(); c = conn.cursor()
+    try:
+        c.execute("SELECT te.*, t.name as training_name, t.start_date, t.end_date FROM training_enrollments te JOIN trainings t ON te.training_id=t.id WHERE te.id=%s AND te.user_id=%s", (enrollment_id, uid))
+        enrollment = c.fetchone()
+        if not enrollment: conn.close(); return jsonify({'error': 'Enrollment not found'}), 404
+        c.execute("UPDATE training_enrollments SET status='acknowledged', acknowledged_at=%s WHERE id=%s", (now_local().isoformat(), enrollment_id))
+        c.execute("SELECT name FROM users WHERE id=%s", (uid,))
+        emp = c.fetchone()
+        c.execute("SELECT email FROM users WHERE role='hr_admin' LIMIT 1")
+        hr = c.fetchone()
+        if hr and emp:
+            html = (f'<p><strong>{emp["name"]}</strong> has confirmed participation in <strong>{enrollment["training_name"]}</strong> ({enrollment["start_date"]} to {enrollment["end_date"]}).</p>'
+                    '<p style="color:#64748b;font-size:13px">Automated notification from OnTime.</p>')
+            send_email(hr['email'], f'[OnTime] Training Confirmed: {emp["name"]} - {enrollment["training_name"]}', html, force=True)
+        log_audit(c, uid, 'training_acknowledged', entity_type='enrollment', entity_id=enrollment_id)
+        conn.commit(); conn.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        conn.rollback(); conn.close()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/training/send-reminders', methods=['POST'])
+def send_training_reminders():
+    err = require_login()
+    if err: return err
+    if session.get('role') != 'hr_admin': return jsonify({'error': 'Unauthorized'}), 403
+    tomorrow = (today_local() + timedelta(days=1)).isoformat()
+    conn = get_db(); c = conn.cursor()
+    try:
+        c.execute("""
+            SELECT te.id, u.name, u.email, t.name as training_name, t.start_date, t.location
+            FROM training_enrollments te
+            JOIN users u ON te.user_id=u.id
+            JOIN trainings t ON te.training_id=t.id
+            WHERE t.start_date=%s AND te.status IN ('invited','acknowledged','pending_approval') AND u.deleted_at IS NULL
+        """, (tomorrow,))
+        enrollments = c.fetchall()
+        conn.close()
+        sent = 0
+        for e in enrollments:
+            html = (f'<p>Hi <strong>{e["name"]}</strong>, reminder: your training <strong>{e["training_name"]}</strong> is tomorrow ({e["start_date"]}) at {e["location"] or "TBD"}.</p>')
+            send_email(e['email'], f'[OnTime] Reminder: {e["training_name"]} is Tomorrow!', html, force=True)
+            sent += 1
+        return jsonify({'ok': True, 'reminders_sent': sent})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 # ── Reports API ───────────────────────────────────────────────────────────────
 
