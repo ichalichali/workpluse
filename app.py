@@ -4016,14 +4016,24 @@ def acknowledge_training():
         enrollment = c.fetchone()
         if not enrollment: conn.close(); return jsonify({'error': 'Enrollment not found'}), 404
         c.execute("UPDATE training_enrollments SET status='acknowledged', acknowledged_at=%s WHERE id=%s", (now_local().isoformat(), enrollment_id))
-        c.execute("SELECT name FROM users WHERE id=%s", (uid,))
+        c.execute("SELECT u.name, u.email, u.manager_id, m.name as mgr_name, m.email as mgr_email FROM users u LEFT JOIN users m ON u.manager_id=m.id WHERE u.id=%s", (uid,))
         emp = c.fetchone()
         c.execute("SELECT email FROM users WHERE role='hr_admin' LIMIT 1")
         hr = c.fetchone()
-        if hr and emp:
-            html = (f'<p><strong>{emp["name"]}</strong> has confirmed participation in <strong>{enrollment["training_name"]}</strong> ({enrollment["start_date"]} to {enrollment["end_date"]}).</p>'
-                    '<p style="color:#64748b;font-size:13px">Automated notification from OnTime.</p>')
-            send_email(hr['email'], f'[OnTime] Training Confirmed: {emp["name"]} - {enrollment["training_name"]}', html)
+        if emp:
+            body = (
+                '<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">'
+                '<div style="background:#0f1f3d;padding:16px 24px"><h2 style="color:white;margin:0;font-size:16px">OnTime — Training Participation Confirmed</h2></div>'
+                '<div style="padding:24px">'
+                f'<p><strong>{emp["name"]}</strong> has confirmed their participation in:</p>'
+                f'<p style="font-size:16px;font-weight:600;color:#0f1f3d">{enrollment["training_name"]}</p>'
+                f'<p style="color:#64748b">{enrollment["start_date"]} to {enrollment["end_date"]}</p>'
+                '<p style="color:#64748b;font-size:13px">Automated notification from OnTime.</p>'
+                '</div></div>'
+            )
+            subject = f'[OnTime] Training Confirmed: {emp["name"]} - {enrollment["training_name"]}'
+            if hr: send_email(hr['email'], subject, body)
+            if emp.get('mgr_email'): send_email(emp['mgr_email'], subject, body)
         log_audit(c, uid, 'training_acknowledged', entity_type='enrollment', entity_id=enrollment_id)
         conn.commit(); conn.close()
         return jsonify({'ok': True})

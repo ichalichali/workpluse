@@ -4425,7 +4425,7 @@ async function loadCatalogTrainings() {
         const getEnrollBtn = (t) => {
             const e = enrollMap[String(t.id)];
             if (!e) return '<button class="btn btn-primary" style="width:100%" onclick="enrollTraining(' + t.id + ',\'' + t.name.replace(/\'/g,"\\\\'") + '\')">' + 'Enroll Now</button>';
-            if (e.status === 'invited') return '<div><button class="btn btn-primary" style="width:100%;background:#7c3aed" onclick="acknowledgeTraining(' + e.id + ')">Confirm Participation</button><p style="font-size:11px;color:#7c3aed;margin:6px 0 0;text-align:center">You have been assigned to this training</p></div>';
+            if (e.status === 'invited') return '<div><button id="ack-btn-' + e.id + '" class="btn btn-primary" style="width:100%;background:#7c3aed" onclick="acknowledgeTraining(' + e.id + ', this)">Confirm Participation</button><p style="font-size:11px;color:#7c3aed;margin:6px 0 0;text-align:center">You have been assigned to this training</p></div>';
             if (e.status === 'acknowledged') return '<button class="btn" style="width:100%;background:#dcfce7;color:#15803d;cursor:default">Participation Confirmed</button>';
             return '<button class="btn" style="width:100%;background:#f1f5f9;color:#64748b;cursor:default">' + (e.status||'').replace(/_/g,' ') + '</button>';
         };
@@ -5549,4 +5549,55 @@ async function renderCutiAdmin() {
   };
 
   await loadAndRender();
+}
+// ── Training: Acknowledge + Enrollment functions ─────────────────────────────
+async function acknowledgeTraining(enrollmentId, btn) {
+  // Immediately disable button to prevent double-click
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Confirming...';
+    btn.style.background = '#94a3b8';
+  }
+  const r = await api('POST', '/training/acknowledge', { enrollment_id: enrollmentId });
+  if (r.ok) {
+    // Replace button with confirmed state
+    if (btn && btn.parentElement) {
+      btn.parentElement.innerHTML =
+        '<button class="btn" style="width:100%;background:#dcfce7;color:#15803d;cursor:default;font-weight:600">' +
+        'Participation Confirmed</button>' +
+        '<p style="font-size:11px;color:#15803d;margin:6px 0 0;text-align:center">HR and your manager have been notified</p>';
+    }
+    showToast('success', 'Participation confirmed! HR and your manager have been notified.');
+    await loadAnnouncementsDropdown();
+  } else {
+    // Re-enable on error
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Confirm Participation';
+      btn.style.background = '#7c3aed';
+    }
+    showToast('error', r.data.error || 'Failed to confirm participation');
+  }
+}
+
+async function showTrainingEnrollments(trainingId) {
+  const r = await api('GET', '/training/enrollments?training_id=' + trainingId);
+  const list = r.ok ? r.data || [] : [];
+  const rows = list.length
+    ? list.map(e =>
+        '<tr><td>' + (e.user_name||'') + '</td>' +
+        '<td>' + (e.status||'').replace(/_/g,' ') + '</td>' +
+        '<td>' + (e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending') + '</td></tr>'
+      ).join('')
+    : '<tr><td colspan="3" style="text-align:center;padding:12px;color:#64748b">No enrollments yet</td></tr>';
+  showModal('Enrollment Status',
+    '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' +
+    rows + '</tbody></table>');
+}
+
+async function sendTrainingReminders() {
+  if (!confirm('Send reminder emails to all employees with training tomorrow?')) return;
+  const r = await api('POST', '/training/send-reminders', {});
+  if (r.ok) showToast('success', r.data.reminders_sent + ' reminder(s) sent.');
+  else showToast('error', r.data.error || 'Failed to send reminders');
 }
