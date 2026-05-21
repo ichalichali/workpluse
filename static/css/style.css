@@ -80,7 +80,7 @@ body {
 }
 .hero-logo-icon {
   width: 44px; height: 44px;
-  background: linear-gradient(135deg, var(--blue), var(--cyan));
+  background: transparent);
   border-radius: 12px;
   display: flex;
   align-items: center;
