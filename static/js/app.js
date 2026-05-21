@@ -104,7 +104,7 @@ function renderLogin() {
   <div class="auth-wrap">
     <div class="auth-hero">
       <div class="hero-logo">
-        <div class="hero-logo-icon"><img src="/static/ontime_logo.png" style="width:36px;height:36px;object-fit:contain" alt="OnTime"></div>
+        <div class="hero-logo-icon">⏱</div>
         <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Track time.<br>Manage leave.<br><span>Stay in sync.</span></h1>
@@ -194,7 +194,7 @@ function renderForgot() {
   document.getElementById('app').innerHTML = `
     <div class="auth-hero">
       <div class="hero-logo">
-        <div class="hero-logo-icon"><img src="/static/ontime_logo.png" style="width:36px;height:36px;object-fit:contain" alt="OnTime"></div>
+        <div class="hero-logo-icon">⏱</div>
         <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Reset your<br><span>password</span></h1>
@@ -229,7 +229,7 @@ function renderReset() {
   document.getElementById('app').innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
-      <div class="hero-logo"><div class="hero-logo-icon"><img src="/static/ontime_logo.png" style="width:36px;height:36px;object-fit:contain" alt="OnTime"></div><div class="hero-logo-text">OnTime</div></div>
+      <div class="hero-logo"><div class="hero-logo-icon">⏱</div><div class="hero-logo-text">OnTime</div></div>
       <h1 class="hero-title">Set new<br><span>password</span></h1>
     </div>
     <div class="auth-panel">
@@ -260,7 +260,7 @@ async function doReset() {
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function renderShell() {
   const role = state.user.role;
-  const isManager = role === 'manager' || role === 'hr_admin';
+  const isManager = role === 'manager' || role === 'hr_admin' || role === 'director' || role === 'ceo';
   const isHR = role === 'hr_admin';
   const initials = state.user.name.split(' ').map(n=>n[0]).join('').slice(0,2);
 
@@ -268,7 +268,7 @@ function renderShell() {
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-logo">
-        <div class="sidebar-logo-icon"><img src="/static/ontime_logo.png" style="width:32px;height:32px;object-fit:contain" alt="OnTime"></div>
+        <div class="sidebar-logo-icon" style="background:none;padding:0;box-shadow:none">⏱</div>
         <div class="sidebar-logo-text">OnTime <span>Attendance & Leave</span></div>
       </div>
       <div class="sidebar-section">
@@ -1932,6 +1932,8 @@ async function empFormHtml(alertId, u={}) {
         <select id="ae-role">
           <option value="employee" ${u.role==='employee'?'selected':''}>Employee</option>
           <option value="manager"  ${u.role==='manager'?'selected':''}>Manager</option>
+          <option value="director" ${u.role==='director'?'selected':''}>Director</option>
+          <option value="ceo"      ${u.role==='ceo'?'selected':''}>CEO</option>
           <option value="hr_admin" ${u.role==='hr_admin'?'selected':''}>HR Admin</option>
         </select>
       </div>
@@ -2608,7 +2610,7 @@ function badgeHtml(status) {
 }
 
 function roleBadge(role) {
-  const map = { employee: ['badge-blue','Employee'], manager: ['badge-green','Manager'], hr_admin: ['badge-purple','HR Admin'] };
+  const map = { employee: ['badge-blue','Employee'], manager: ['badge-green','Manager'], hr_admin: ['badge-purple','HR Admin'], director: ['badge-yellow','Director'], ceo: ['badge-red','CEO'] };
   const [cls, label] = map[role] || ['badge-grey', role];
   return `<span class="badge ${cls}">${label}</span>`;
 }
@@ -2770,7 +2772,7 @@ render();
 async function renderReports() {
   const el   = document.getElementById('page-content');
   const role = state.user.role;
-  const isManager = role === 'manager' || role === 'hr_admin';
+  const isManager = role === 'manager' || role === 'hr_admin' || role === 'director' || role === 'ceo';
   const thisMonth  = new Date().toISOString().slice(0,7);
 
   el.innerHTML = `
@@ -2886,7 +2888,7 @@ async function downloadMyPDF() {
 
   printHTML(reportStyles() + `
     <div class="rpt-header">
-      <div class="rpt-logo"><img src="/static/ontime_logo.png" style="width:20px;height:20px;object-fit:contain;vertical-align:middle" alt="OnTime"> OnTime</div>
+      <div class="rpt-logo">⏱ OnTime</div>
       <h1>Attendance & Leave Report</h1>
       <p>${state.user.name} · ${state.user.employee_id} · ${state.user.department||''}</p>
       <p class="period">${monthName}</p>
@@ -3024,7 +3026,7 @@ async function downloadTeamPDF() {
 
   printHTML(reportStyles() + `
     <div class="rpt-header">
-      <div class="rpt-logo"><img src="/static/ontime_logo.png" style="width:20px;height:20px;object-fit:contain;vertical-align:middle" alt="OnTime"> OnTime</div>
+      <div class="rpt-logo">⏱ OnTime</div>
       <h1>Attendance & Leave Report</h1>
       <p>${scope}</p>
       <p class="period">${monthName}</p>
@@ -3461,9 +3463,9 @@ async function renderBusinessTrips() {
 }
 
 async function renderBusinessTripApprovals() {
-  // MANAGEMENT nav: approval view for managers/HR
+  // MANAGEMENT nav: approval view for all approver roles
   const role = state.user.role;
-  if (role === 'manager') return renderManagerTrips();
+  if (role === 'manager' || role === 'director' || role === 'ceo') return renderManagerTrips();
   if (role === 'hr_admin') return renderHRTrips();
 }
 

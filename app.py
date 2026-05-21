@@ -885,6 +885,32 @@ def notify_supervisor(req_id):
     </div>"""
     send_email(mgr['email'],f"Leave Request: {emp['name']} — {req['days']} day(s) [{lt['name']}]",html)
 
+def notify_hr_ceo_leave(req_id):
+    """Notify HR Admin when CEO self-approves leave (acknowledgement only)."""
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT * FROM leave_requests WHERE id=%s", (req_id,)); req = c.fetchone()
+    if not req: conn.close(); return
+    c.execute("SELECT * FROM users WHERE id=%s", (req['user_id'],)); emp = c.fetchone()
+    c.execute("SELECT name FROM leave_types WHERE id=%s", (req['leave_type_id'],)); lt = c.fetchone()
+    c.execute("SELECT email FROM users WHERE role='hr_admin' LIMIT 1"); hr = c.fetchone()
+    conn.close()
+    if not hr: return
+    dates_str = ', '.join(json.loads(req['dates_json'])) if req['dates_json'] else f"{req['start_date']} to {req['end_date']}"
+    html = (
+        '<div style="font-family:sans-serif;max-width:600px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">'
+        '<div style="background:#0f1f3d;padding:24px 28px"><h2 style="color:white;margin:0">OnTime — CEO Leave Acknowledgement</h2></div>'
+        '<div style="padding:28px">'
+        f'<p>This is an acknowledgement that <strong>{emp["name"]} (CEO)</strong> has approved their own leave.</p>'
+        '<table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">'
+        f'<tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600">Leave Type</td><td style="padding:10px">{lt["name"]}</td></tr>'
+        f'<tr><td style="padding:10px;color:#64748b;font-weight:600">Dates</td><td style="padding:10px">{dates_str}</td></tr>'
+        f'<tr style="background:#f8fafc"><td style="padding:10px;color:#64748b;font-weight:600">Days</td><td style="padding:10px"><strong>{req["days"]} working day(s)</strong></td></tr>'
+        '</table>'
+        '<p style="color:#64748b;font-size:13px">No action required. This is for your records.</p>'
+        '</div></div>'
+    )
+    send_email(hr['email'], f"[Acknowledgement] CEO Leave: {dates_str}", html, force=True)
+
 def require_login():
     if 'user_id' not in session: return jsonify({'error':'Unauthorized'}),401
     return None
@@ -1206,6 +1232,18 @@ def apply_leave():
     log_audit(c, uid, 'leave_apply', entity_type='leave_request', entity_id=req_id,
               after={'leave_type_id':data['leave_type_id'],'start_date':start_date,'end_date':end_date,
                      'days':days,'dates':json.loads(dates_json) if dates_json else None,'reason':data.get('reason','')})
+    # CEO: auto-approve own leave + notify HR Admin
+    if session.get('role') == 'ceo':
+        conn2 = get_db(); c2 = conn2.cursor()
+        c2.execute("UPDATE leave_requests SET status='approved', approved_by=%s, approved_at=%s WHERE id=%s",
+                   (uid, now_local().isoformat(), req_id))
+        c2.execute("UPDATE leave_balances SET used_days=used_days+%s WHERE user_id=%s AND leave_type_id=%s AND year=%s",
+                   (days, uid, data['leave_type_id'], int(start_date[:4])))
+        conn2.commit(); conn2.close()
+        try: notify_hr_ceo_leave(req_id)
+        except: pass
+        return jsonify({'ok': True, 'days': days, 'auto_approved': True})
+
     conn.commit(); conn.close()
     try: notify_supervisor(req_id)
     except: pass
@@ -1227,15 +1265,29 @@ def pending_leaves():
     err=require_login()
     if err: return err
     uid=session['user_id']; role=session['role']; conn=get_db(); c=conn.cursor()
-    if role=='hr_admin':
-        c.execute("""SELECT lr.*,lt.name as leave_name,u.name as employee_name,u.employee_id,u.department
+    if role == 'hr_admin':
+        # HR Admin sees all pending leaves
+        c.execute("""SELECT lr.*,lt.name as leave_name,u.name as employee_name,u.employee_id,u.department,u.role as employee_role
                FROM leave_requests lr JOIN leave_types lt ON lr.leave_type_id=lt.id
                JOIN users u ON lr.user_id=u.id WHERE lr.status='pending' ORDER BY lr.created_at""")
-    else:
-        c.execute("""SELECT lr.*,lt.name as leave_name,u.name as employee_name,u.employee_id,u.department
+    elif role == 'ceo':
+        # CEO sees pending leaves from directors only
+        c.execute("""SELECT lr.*,lt.name as leave_name,u.name as employee_name,u.employee_id,u.department,u.role as employee_role
                FROM leave_requests lr JOIN leave_types lt ON lr.leave_type_id=lt.id
                JOIN users u ON lr.user_id=u.id
-               WHERE lr.status='pending' AND u.manager_id=%s ORDER BY lr.created_at""",(uid,))
+               WHERE lr.status='pending' AND u.role='director' ORDER BY lr.created_at""")
+    elif role == 'director':
+        # Director sees pending leaves from their direct reports
+        c.execute("""SELECT lr.*,lt.name as leave_name,u.name as employee_name,u.employee_id,u.department,u.role as employee_role
+               FROM leave_requests lr JOIN leave_types lt ON lr.leave_type_id=lt.id
+               JOIN users u ON lr.user_id=u.id
+               WHERE lr.status='pending' AND u.manager_id=%s ORDER BY lr.created_at""", (uid,))
+    else:
+        # Manager sees pending leaves from their direct reports
+        c.execute("""SELECT lr.*,lt.name as leave_name,u.name as employee_name,u.employee_id,u.department,u.role as employee_role
+               FROM leave_requests lr JOIN leave_types lt ON lr.leave_type_id=lt.id
+               JOIN users u ON lr.user_id=u.id
+               WHERE lr.status='pending' AND u.manager_id=%s ORDER BY lr.created_at""", (uid,))
     data=rows(c); conn.close(); return jsonify([dict(r) for r in data])
 
 
@@ -1265,13 +1317,25 @@ def leave_action():
         if c.fetchone():
             is_delegated_approver = True
     
-    # Permission check: only original manager or delegated approver or HR can approve
-    if role == 'manager' and uid != original_manager and not is_delegated_approver:
-        conn.close()
-        return jsonify({'error': 'Forbidden - not your team'}), 403
-    elif role == 'employee':
-        conn.close()
-        return jsonify({'error': 'Forbidden'}), 403
+    # Get applicant's role for CEO permission check
+    c.execute("SELECT role FROM users WHERE id=%s", (req['user_id'],))
+    applicant_role_row = c.fetchone()
+    applicant_role = applicant_role_row['role'] if applicant_role_row else 'employee'
+
+    # Permission check per role hierarchy
+    if role == 'employee':
+        conn.close(); return jsonify({'error': 'Forbidden'}), 403
+    elif role == 'manager' and uid != original_manager and not is_delegated_approver:
+        conn.close(); return jsonify({'error': 'Forbidden - not your team'}), 403
+    elif role == 'director':
+        # Director approves managers/HR admins who report to them
+        if uid != original_manager:
+            conn.close(); return jsonify({'error': 'Forbidden - not your direct report'}), 403
+    elif role == 'ceo':
+        # CEO can only approve directors
+        if applicant_role != 'director':
+            conn.close(); return jsonify({'error': 'Forbidden - CEO approves directors only'}), 403
+    # hr_admin: can approve any leave (no extra check)
     
     # ── Rest of original approval logic ───────────────────────────────────
     before_status=req['status']
@@ -4043,8 +4107,8 @@ def request_business_trip():
     uid = session['user_id']
     role = session['role']
     
-    if session.get('role') not in ('employee', 'manager', 'hr_admin'):
-       return {'error': 'Unauthorized'}, 403
+    if session.get('role') not in ('employee', 'manager', 'hr_admin', 'director', 'ceo'):
+        return jsonify({'error': 'Unauthorized'}), 403
     
     data = request.get_json() or {}
     start_date = data.get('start_date')
@@ -4089,30 +4153,31 @@ def get_pending_trips():
     uid = session['user_id']
     role = session['role']
     
-    if role not in ('manager', 'hr_admin'):
-        return jsonify({'error': 'Manager or HR access required'}), 403
+    if role not in ('manager', 'hr_admin', 'director', 'ceo'):
+        return jsonify({'error': 'Access denied'}), 403
     
     conn = get_db(); c = conn.cursor()
     try:
-        if role == 'manager':
+        if role == 'hr_admin':
+            # HR Admin sees all pending trips
             c.execute("""
-                SELECT bt.id, u.name, u.employee_id, bt.start_date, bt.end_date, 
+                SELECT bt.id, u.name, u.employee_id, bt.start_date, bt.end_date,
+                       bt.destination, bt.purpose, bt.created_at, bt.status, m.name as manager_name
+                FROM business_trips bt
+                JOIN users u ON bt.user_id = u.id
+                LEFT JOIN users m ON bt.manager_id = m.id
+                WHERE bt.status = 'pending' ORDER BY bt.created_at DESC
+            """)
+        else:
+            # Manager/Director/CEO: trips where they are the assigned approver
+            c.execute("""
+                SELECT bt.id, u.name, u.employee_id, bt.start_date, bt.end_date,
                        bt.destination, bt.purpose, bt.created_at, bt.status
                 FROM business_trips bt
                 JOIN users u ON bt.user_id = u.id
                 WHERE bt.manager_id = %s AND bt.status = 'pending'
                 ORDER BY bt.created_at DESC
             """, (uid,))
-        else:
-            c.execute("""
-                SELECT bt.id, u.name, u.employee_id, bt.start_date, bt.end_date, 
-                       bt.destination, bt.purpose, bt.created_at, bt.status, m.name as manager_name
-                FROM business_trips bt
-                JOIN users u ON bt.user_id = u.id
-                LEFT JOIN users m ON bt.manager_id = m.id
-                WHERE bt.status = 'pending'
-                ORDER BY bt.created_at DESC
-            """)
         
         trips = [dict(r) for r in c.fetchall()]
         conn.close()
@@ -4131,8 +4196,8 @@ def approve_business_trip():
     uid = session['user_id']
     role = session['role']
     
-    if role != 'manager':
-        return jsonify({'error': 'Only managers can approve'}), 403
+    if role not in ('manager', 'director', 'ceo', 'hr_admin'):
+        return jsonify({'error': 'Insufficient permissions to approve trips'}), 403
     
     data = request.get_json() or {}
     trip_id = data.get('id')
@@ -4142,10 +4207,16 @@ def approve_business_trip():
     
     conn = get_db(); c = conn.cursor()
     try:
-        c.execute("""
-            SELECT user_id, start_date, end_date FROM business_trips 
-            WHERE id = %s AND manager_id = %s AND status = 'pending'
-        """, (trip_id, uid))
+        if role == 'hr_admin':
+            c.execute("""
+                SELECT user_id, start_date, end_date FROM business_trips
+                WHERE id = %s AND status = 'pending'
+            """, (trip_id,))
+        else:
+            c.execute("""
+                SELECT user_id, start_date, end_date FROM business_trips
+                WHERE id = %s AND manager_id = %s AND status = 'pending'
+            """, (trip_id, uid))
         
         trip = c.fetchone()
         if not trip:
