@@ -4074,10 +4074,7 @@ async function renderTrainingManagement() {
     el.innerHTML = `
         <div class="page-header flex justify-between items-center">
             <div><h1>🎓 Training & Certifications</h1><p>Manage employee training programs</p></div>
-            <div class="flex gap-2">
-                <button class="btn btn-secondary" onclick="sendTrainingReminders()">Send Reminders</button>
-                <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
-            </div>
+            <button class="btn btn-primary" onclick="showCreateTrainingModal()">+ New Training</button>
         </div>
         <div id="training-list">Loading…</div>
     `;
@@ -4128,8 +4125,7 @@ async function loadTrainingList() {
                                             <td><span style="color:${statusColor};font-weight:600">${status}</span></td>
                                             <td>
                                                 <div class="flex gap-2">
-                                                    <button class="btn btn-ghost btn-sm" onclick="showTrainingEnrollments(${t.id})">Enroll List</button>
-                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
+                                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
                                                     <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >🗑️</button>
                                                 </div>
                                             </td>
@@ -4249,8 +4245,9 @@ async function showCreateTrainingModal() {
                 is_mandatory: document.getElementById('train-mandatory').checked
             });
             
+            if (!createR.ok) { showToast('error', createR.data.error || 'Failed to create training'); return; }
             showToast('success', `"${name}" training created!`);
-            if (createR.ok && createR.data && createR.data.id) { const nr = await api('POST', '/training/notify-targets', { training_id: createR.data.id }); if (nr.ok && nr.data.notified > 0) showToast('success', `${nr.data.notified} employee(s) notified.`); }
+            if (createR.data && createR.data.id) { const nr = await api('POST', '/training/notify-targets', { training_id: createR.data.id }); if (nr.ok && nr.data.notified > 0) showToast('success', `${nr.data.notified} employee(s) notified.`); }
             await loadTrainingList();
         } catch (err) {
             showToast('error', 'Failed to create training');
@@ -4406,9 +4403,9 @@ async function renderTrainingCatalog() {
 
 async function loadCatalogTrainings() {
     try {
-        const [r, enrollR] = await Promise.all([api('GET', '/training/available'), api('GET', '/training/my-enrollments')]);
+        const r = await api('GET', '/training/available');
         const trainings = r.data || [];
-        const enrollMap = {}; (enrollR.ok ? enrollR.data || [] : []).forEach(e => { enrollMap[e.training_id] = e; });
+        
         if (trainings.length === 0) {
             document.getElementById('catalog-list').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings available at the moment.</div>';
             return;
@@ -5530,25 +5527,4 @@ async function renderCutiAdmin() {
   };
 
   await loadAndRender();
-}
-
-// Training notification functions
-async function acknowledgeTraining(enrollmentId) {
-  const r = await api('POST', '/training/acknowledge', { enrollment_id: enrollmentId });
-  if (r.ok) { showToast('success', 'Participation confirmed! HR notified.'); await loadCatalogTrainings(); }
-  else showToast('error', r.data.error || 'Failed to confirm');
-}
-
-async function showTrainingEnrollments(trainingId) {
-  const r = await api('GET', '/training/enrollments?training_id=' + trainingId);
-  const list = r.ok ? r.data || [] : [];
-  const rows = list.length ? list.map(e => '<tr><td>' + (e.user_name||'') + '</td><td>' + (e.status||'').replace(/_/g,' ') + '</td><td>' + (e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending') + '</td></tr>').join('') : '<tr><td colspan="3" style="text-align:center">No enrollments yet</td></tr>';
-  showModal('Enrollment Status', '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' + rows + '</tbody></table>');
-}
-
-async function sendTrainingReminders() {
-  if (!confirm('Send reminder emails to all employees with training tomorrow?')) return;
-  const r = await api('POST', '/training/send-reminders', {});
-  if (r.ok) showToast('success', r.data.reminders_sent + ' reminder(s) sent.');
-  else showToast('error', r.data.error || 'Failed');
 }

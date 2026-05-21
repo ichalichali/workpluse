@@ -3255,7 +3255,7 @@ def create_training():
             data.get('target_user_ids_json'),
             session['user_id']
         ))
-        training_id = c.fetchone()[0]
+        training_id = c.fetchone()["id"]
         
         # Audit log
         c.execute("""
@@ -3412,22 +3412,19 @@ def get_available_trainings():
     conn = get_db()
     c = conn.cursor()
     
-    # Get trainings where target matches user OR user has an enrollment
+    # Get trainings where target matches user
     c.execute("""
-        SELECT DISTINCT t.id, t.name, t.description, t.issuer, t.is_mandatory,
-               t.category, t.start_date, t.end_date, t.location
-        FROM trainings t
-        LEFT JOIN training_enrollments te ON te.training_id = t.id AND te.user_id = %s
+        SELECT id, name, description, issuer, is_mandatory, category, start_date, end_date, location
+        FROM trainings
         WHERE (
-            t.target_type = 'all' OR
-            (t.target_type = 'role' AND t.target_role = %s) OR
-            (t.target_type = 'department' AND t.target_department_id = %s) OR
-            (t.target_type = 'user' AND t.target_user_ids_json::jsonb @> %s) OR
-            te.id IS NOT NULL
+            target_type = 'all' OR
+            (target_type = 'role' AND target_role = %s) OR
+            (target_type = 'department' AND target_department_id = %s) OR
+            (target_type = 'user' AND target_user_ids_json::jsonb @> %s)
         )
-        AND t.end_date >= CURRENT_DATE
-        ORDER BY t.start_date ASC
-    """, (user_id, user_role, user_dept, json.dumps([user_id])))
+        AND start_date >= CURRENT_DATE
+        ORDER BY start_date ASC
+    """, (user_role, user_dept, json.dumps([user_id])))
     
     rows = c.fetchall()
     result = []
@@ -3477,11 +3474,11 @@ def enroll_training():
             RETURNING id
         """, (user_id, training_id))
         
-        enroll_id = c.fetchone()[0]
+        enroll_id = c.fetchone()["id"]
         
         # Get training details for email
         c.execute("SELECT name FROM trainings WHERE id=%s", (training_id,))
-        training_name = c.fetchone()[0]
+        training_name = c.fetchone()["name"]
         
         # Get user's manager
         c.execute("""
@@ -3643,7 +3640,7 @@ def approve_enrollment(enroll_id):
         # Send email to employee
         c = get_db().cursor()
         c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
-        employee_email = c.fetchone()[0]
+        employee_email = c.fetchone()["email"]
         send_email(employee_email, f'Training Enrollment Approved', f'Your enrollment in {training_name} has been approved.')
         
         return jsonify({'ok': True})
@@ -3683,7 +3680,7 @@ def reject_enrollment(enroll_id):
         
         # Get training name
         c.execute("SELECT name FROM trainings WHERE id=%s", (training_id,))
-        training_name = c.fetchone()[0]
+        training_name = c.fetchone()["name"]
         
         # Audit
         c.execute("""
@@ -3697,7 +3694,7 @@ def reject_enrollment(enroll_id):
         # Send email to employee
         c = get_db().cursor()
         c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
-        employee_email = c.fetchone()[0]
+        employee_email = c.fetchone()["email"]
         send_email(employee_email, f'Training Enrollment Rejected', f'Your enrollment in {training_name} has been rejected.\nReason: {reason}')
         
         return jsonify({'ok': True})
@@ -3735,11 +3732,11 @@ def submit_certificate():
             data.get('notes')
         ))
         
-        cert_id = c.fetchone()[0]
+        cert_id = c.fetchone()["id"]
         
         # Get training name
         c.execute("SELECT name FROM trainings WHERE id=%s", (data.get('training_id'),))
-        training_name = c.fetchone()[0]
+        training_name = c.fetchone()["name"]
         
         # Get user's manager
         c.execute("SELECT id, email FROM users WHERE id=(SELECT manager_id FROM users WHERE id=%s)", (user_id,))
@@ -3979,7 +3976,7 @@ def reject_certificate(cert_id):
         # Send email to employee
         c = get_db().cursor()
         c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
-        emp_email = c.fetchone()[0]
+        emp_email = c.fetchone()["email"]
         send_email(emp_email, 'Certificate Rejection', f'Your certificate {cert_number} was rejected.\nReason: {reason}')
         
         return jsonify({'ok': True})
@@ -4003,26 +4000,26 @@ def get_training_dashboard():
         SELECT COUNT(*) FROM training_certificates
         WHERE status='approved' AND expiry_date = CURRENT_DATE + 30
     """)
-    expiring_soon = c.fetchone()[0]
+    expiring_soon = list(c.fetchone().values())[0]
     
     # Expired
     c.execute("""
         SELECT COUNT(*) FROM training_certificates
         WHERE status='approved' AND expiry_date < CURRENT_DATE
     """)
-    expired = c.fetchone()[0]
+    expired = list(c.fetchone().values())[0]
     
     # Compliance rate
     c.execute("""
         SELECT COUNT(*) FROM users WHERE role='employee'
     """)
-    total_employees = c.fetchone()[0]
+    total_employees = list(c.fetchone().values())[0]
     
     c.execute("""
         SELECT COUNT(DISTINCT user_id) FROM training_certificates
         WHERE status='approved' AND expiry_date >= CURRENT_DATE
     """)
-    compliant = c.fetchone()[0]
+    compliant = list(c.fetchone().values())[0]
     
     compliance_rate = (compliant / total_employees * 100) if total_employees > 0 else 0
     
