@@ -104,7 +104,7 @@ function renderLogin() {
   <div class="auth-wrap">
     <div class="auth-hero">
       <div class="hero-logo">
-        <div class="hero-logo-icon">⏱</div>
+        <img src="/static/ontime_logo.png" alt="OnTime" onerror="this.outerHTML='<span style=\'font-size:28px\'>&#x23F1;</span>'">
         <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Track time.<br>Manage leave.<br><span>Stay in sync.</span></h1>
@@ -194,7 +194,7 @@ function renderForgot() {
   document.getElementById('app').innerHTML = `
     <div class="auth-hero">
       <div class="hero-logo">
-        <div class="hero-logo-icon">⏱</div>
+        <img src="/static/ontime_logo.png" alt="OnTime" onerror="this.outerHTML='<span style=\'font-size:28px\'>&#x23F1;</span>'">
         <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Reset your<br><span>password</span></h1>
@@ -229,7 +229,7 @@ function renderReset() {
   document.getElementById('app').innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
-      <div class="hero-logo"><div class="hero-logo-icon">⏱</div><div class="hero-logo-text">OnTime</div></div>
+      <div class="hero-logo"><img src="/static/ontime_logo.png" alt="OnTime" onerror="this.outerHTML='<span style=\'font-size:28px\'>&#x23F1;</span>'"><div class="hero-logo-text">OnTime</div></div>
       <h1 class="hero-title">Set new<br><span>password</span></h1>
     </div>
     <div class="auth-panel">
@@ -268,7 +268,7 @@ function renderShell() {
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-logo">
-        <div class="sidebar-logo-icon" style="background:none;padding:0;box-shadow:none">⏱</div>
+        <img src="/static/ontime_logo.png" alt="OnTime" style="height:40px;object-fit:contain;background:none;padding:0;box-shadow:none" onerror="this.outerHTML='<span style=\'font-size:28px\'>&#x23F1;</span>'">
         <div class="sidebar-logo-text">OnTime <span>Attendance & Leave</span></div>
       </div>
       <div class="sidebar-section">
@@ -2891,7 +2891,7 @@ async function downloadMyPDF() {
 
   printHTML(reportStyles() + `
     <div class="rpt-header">
-      <div class="rpt-logo">⏱ OnTime</div>
+      <div class="rpt-logo"><img src="/static/ontime_logo.png" alt="OnTime" style="height:28px;vertical-align:middle;margin-right:6px"> OnTime</div>
       <h1>Attendance & Leave Report</h1>
       <p>${state.user.name} · ${state.user.employee_id} · ${state.user.department||''}</p>
       <p class="period">${monthName}</p>
@@ -3029,7 +3029,7 @@ async function downloadTeamPDF() {
 
   printHTML(reportStyles() + `
     <div class="rpt-header">
-      <div class="rpt-logo">⏱ OnTime</div>
+      <div class="rpt-logo"><img src="/static/ontime_logo.png" alt="OnTime" style="height:28px;vertical-align:middle;margin-right:6px"> OnTime</div>
       <h1>Attendance & Leave Report</h1>
       <p>${scope}</p>
       <p class="period">${monthName}</p>
