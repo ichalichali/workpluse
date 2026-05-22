@@ -3286,18 +3286,18 @@ def list_trainings():
     result = []
     for row in rows:
         result.append({
-            'id': row[0],
-            'name': row[1],
-            'description': row[2],
-            'issuer': row[3],
-            'is_mandatory': row[4],
-            'category': row[5],
-            'start_date': row[6].isoformat() if row[6] else None,
-            'end_date': row[7].isoformat() if row[7] else None,
-            'location': row[8],
-            'target_type': row[9],
-            'created_by': row[10],
-            'created_at': row[11].isoformat() if row[11] else None
+            'id': row['id'],
+            'name': row['name'],
+            'description': row['description'],
+            'issuer': row['issuer'],
+            'is_mandatory': row['is_mandatory'],
+            'category': row['category'],
+            'start_date': row['start_date'].isoformat() if row['start_date'] else None,
+            'end_date': row['end_date'].isoformat() if row['end_date'] else None,
+            'location': row['location'],
+            'target_type': row['target_type'],
+            'created_by': row['created_by'],
+            'created_at': row['created_at'].isoformat() if row['created_at'] else None
         })
     conn.close()
     return jsonify(result)
@@ -3317,20 +3317,20 @@ def get_training(training_id):
         return {'error': 'Training not found'}, 404
     
     return jsonify({
-        'id': row[0],
-        'name': row[1],
-        'description': row[2],
-        'issuer': row[3],
-        'is_mandatory': row[4],
-        'category': row[5],
-        'start_date': row[6].isoformat() if row[6] else None,
-        'end_date': row[7].isoformat() if row[7] else None,
-        'location': row[8],
-        'target_type': row[9],
-        'target_department_id': row[10],
-        'target_role': row[11],
-        'target_user_ids_json': row[12],
-        'created_by': row[13]
+        'id': row['id'],
+        'name': row['name'],
+        'description': row['description'],
+        'issuer': row['issuer'],
+        'is_mandatory': row['is_mandatory'],
+        'category': row['category'],
+        'start_date': row['start_date'].isoformat() if row['start_date'] else None,
+        'end_date': row['end_date'].isoformat() if row['end_date'] else None,
+        'location': row['location'],
+        'target_type': row['target_type'],
+        'target_department_id': row['target_department_id'],
+        'target_role': row['target_role'],
+        'target_user_ids_json': row['target_user_ids_json'],
+        'created_by': row['created_by']
     })
 
 @app.route('/api/training/<int:training_id>', methods=['PUT'])
@@ -3431,15 +3431,15 @@ def get_available_trainings():
     result = []
     for row in rows:
         result.append({
-            'id': row[0],
-            'name': row[1],
-            'description': row[2],
-            'issuer': row[3],
-            'is_mandatory': row[4],
-            'category': row[5],
-            'start_date': row[6].isoformat() if row[6] else None,
-            'end_date': row[7].isoformat() if row[7] else None,
-            'location': row[8]
+            'id': row['id'],
+            'name': row['name'],
+            'description': row['description'],
+            'issuer': row['issuer'],
+            'is_mandatory': row['is_mandatory'],
+            'category': row['category'],
+            'start_date': row['start_date'].isoformat() if row['start_date'] else None,
+            'end_date': row['end_date'].isoformat() if row['end_date'] else None,
+            'location': row['location']
         })
     conn.close()
     return jsonify(result)
@@ -3520,7 +3520,7 @@ def get_my_enrollments():
     c = conn.cursor()
     
     c.execute("""
-        SELECT te.id, te.training_id, t.name, te.status, te.enrolled_at, te.manager_approved, t.start_date, t.end_date
+        SELECT te.id, te.training_id, t.name AS training_name, te.status, te.enrolled_at, te.manager_approved, t.start_date, t.end_date
         FROM training_enrollments te
         JOIN trainings t ON te.training_id = t.id
         WHERE te.user_id = %s
@@ -3531,14 +3531,14 @@ def get_my_enrollments():
     result = []
     for row in rows:
         result.append({
-            'id': row[0],
-            'training_id': row[1],
-            'training_name': row[2],
-            'status': row[3],
-            'enrolled_at': row[4].isoformat() if row[4] else None,
-            'manager_approved': row[5],
-            'start_date': row[6].isoformat() if row[6] else None,
-            'end_date': row[7].isoformat() if row[7] else None
+            'id': row['id'],
+            'training_id': row['training_id'],
+            'training_name': row['training_name'],
+            'status': row['status'],
+            'enrolled_at': row['enrolled_at'].isoformat() if row['enrolled_at'] else None,
+            'manager_approved': row['manager_approved'],
+            'start_date': row['start_date'].isoformat() if row['start_date'] else None,
+            'end_date': row['end_date'].isoformat() if row['end_date'] else None
         })
     conn.close()
     return jsonify(result)
@@ -3555,7 +3555,7 @@ def get_enrollments():
     if session.get('role') == 'manager':
         # Manager sees team enrollments
         c.execute("""
-            SELECT te.id, te.user_id, u.name, te.training_id, t.name, te.status, te.enrolled_at
+            SELECT te.id, te.user_id, u.name AS user_name, te.training_id, t.name AS training_name, te.status, te.enrolled_at
             FROM training_enrollments te
             JOIN trainings t ON te.training_id = t.id
             JOIN users u ON te.user_id = u.id
@@ -3565,7 +3565,7 @@ def get_enrollments():
     else:
         # HR sees all
         c.execute("""
-            SELECT te.id, te.user_id, u.name, te.training_id, t.name, te.status, te.enrolled_at
+            SELECT te.id, te.user_id, u.name AS user_name, te.training_id, t.name AS training_name, te.status, te.enrolled_at
             FROM training_enrollments te
             JOIN trainings t ON te.training_id = t.id
             JOIN users u ON te.user_id = u.id
@@ -3577,13 +3577,13 @@ def get_enrollments():
     result = []
     for row in rows:
         result.append({
-            'id': row[0],
-            'user_id': row[1],
-            'user_name': row[2],
-            'training_id': row[3],
-            'training_name': row[4],
-            'status': row[5],
-            'enrolled_at': row[6].isoformat() if row[6] else None
+            'id': row['id'],
+            'user_id': row['user_id'],
+            'user_name': row['user_name'],
+            'training_id': row['training_id'],
+            'training_name': row['training_name'],
+            'status': row['status'],
+            'enrolled_at': row['enrolled_at'].isoformat() if row['enrolled_at'] else None
         })
     conn.close()
     return jsonify(result)
@@ -3776,7 +3776,7 @@ def get_my_certificates():
     c = conn.cursor()
     
     c.execute("""
-        SELECT tc.id, t.name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.issuer_name, tc.status, tc.created_at
+        SELECT tc.id, t.name AS training_name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.issuer_name, tc.status, tc.created_at
         FROM training_certificates tc
         JOIN trainings t ON tc.training_id = t.id
         WHERE tc.user_id = %s
@@ -3786,17 +3786,17 @@ def get_my_certificates():
     rows = c.fetchall()
     result = []
     for row in rows:
-        days_to_expiry = (row[4] - date.today()).days if row[4] else None
+        days_to_expiry = (row['expiry_date'] - date.today()).days if row['expiry_date'] else None
         result.append({
-            'id': row[0],
-            'training_name': row[1],
-            'certificate_number': row[2],
-            'issued_date': row[3].isoformat() if row[3] else None,
-            'expiry_date': row[4].isoformat() if row[4] else None,
-            'issuer_name': row[5],
-            'status': row[6],
+            'id': row['id'],
+            'training_name': row['training_name'],
+            'certificate_number': row['certificate_number'],
+            'issued_date': row['issued_date'].isoformat() if row['issued_date'] else None,
+            'expiry_date': row['expiry_date'].isoformat() if row['expiry_date'] else None,
+            'issuer_name': row['issuer_name'],
+            'status': row['status'],
             'days_to_expiry': days_to_expiry,
-            'created_at': row[7].isoformat() if row[7] else None
+            'created_at': row['created_at'].isoformat() if row['created_at'] else None
         })
     conn.close()
     return jsonify(result)
@@ -3812,7 +3812,7 @@ def get_certificates():
     if session.get('role') == 'manager':
         # Manager sees team certs
         c.execute("""
-            SELECT tc.id, tc.user_id, u.name, t.name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.status
+            SELECT tc.id, tc.user_id, u.name AS user_name, t.name AS training_name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.status
             FROM training_certificates tc
             JOIN trainings t ON tc.training_id = t.id
             JOIN users u ON tc.user_id = u.id
@@ -3822,7 +3822,7 @@ def get_certificates():
     else:
         # HR sees all
         c.execute("""
-            SELECT tc.id, tc.user_id, u.name, t.name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.status
+            SELECT tc.id, tc.user_id, u.name AS user_name, t.name AS training_name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.status
             FROM training_certificates tc
             JOIN trainings t ON tc.training_id = t.id
             JOIN users u ON tc.user_id = u.id
@@ -3832,16 +3832,16 @@ def get_certificates():
     rows = c.fetchall()
     result = []
     for row in rows:
-        days_to_expiry = (row[6] - date.today()).days if row[6] else None
+        days_to_expiry = (row['expiry_date'] - date.today()).days if row['expiry_date'] else None
         result.append({
-            'id': row[0],
-            'user_id': row[1],
-            'user_name': row[2],
-            'training_name': row[3],
-            'certificate_number': row[4],
-            'issued_date': row[5].isoformat() if row[5] else None,
-            'expiry_date': row[6].isoformat() if row[6] else None,
-            'status': row[7],
+            'id': row['id'],
+            'user_id': row['user_id'],
+            'user_name': row['user_name'],
+            'training_name': row['training_name'],
+            'certificate_number': row['certificate_number'],
+            'issued_date': row['issued_date'].isoformat() if row['issued_date'] else None,
+            'expiry_date': row['expiry_date'].isoformat() if row['expiry_date'] else None,
+            'status': row['status'],
             'days_to_expiry': days_to_expiry
         })
     conn.close()
@@ -3857,7 +3857,7 @@ def get_expiring_certificates():
     c = conn.cursor()
     
     c.execute("""
-        SELECT tc.id, tc.user_id, u.email, u.name, t.name, tc.certificate_number, tc.expiry_date, um.email as manager_email
+        SELECT tc.id, tc.user_id, u.email AS user_email, u.name AS user_name, t.name AS training_name, tc.certificate_number, tc.expiry_date, um.email AS manager_email
         FROM training_certificates tc
         JOIN trainings t ON tc.training_id = t.id
         JOIN users u ON tc.user_id = u.id
@@ -3870,14 +3870,14 @@ def get_expiring_certificates():
     result = []
     for row in rows:
         result.append({
-            'id': row[0],
-            'user_id': row[1],
-            'user_email': row[2],
-            'user_name': row[3],
-            'training_name': row[4],
-            'certificate_number': row[5],
-            'expiry_date': row[6].isoformat() if row[6] else None,
-            'manager_email': row[7]
+            'id': row['id'],
+            'user_id': row['user_id'],
+            'user_email': row['user_email'],
+            'user_name': row['user_name'],
+            'training_name': row['training_name'],
+            'certificate_number': row['certificate_number'],
+            'expiry_date': row['expiry_date'].isoformat() if row['expiry_date'] else None,
+            'manager_email': row['manager_email']
         })
     conn.close()
     return jsonify(result)
