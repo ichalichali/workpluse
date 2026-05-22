@@ -104,7 +104,7 @@ function renderLogin() {
   <div class="auth-wrap">
     <div class="auth-hero">
       <div class="hero-logo">
-        <img src="/static/ontime_logo.png" alt="OnTime" onerror="this.outerHTML='<span style=\'font-size:28px\'>&#x23F1;</span>'">
+        <img src="/static/ontime_logo.png" width="30" height="30" alt="OnTime" onerror="this.outerHTML='<span style=\'font-size:28px\'>&#x23F1;</span>'">
         <div class="hero-logo-text">OnTime</div>
       </div>
       <h1 class="hero-title">Track time.<br>Manage leave.<br><span>Stay in sync.</span></h1>
