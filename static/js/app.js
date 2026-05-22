@@ -520,7 +520,7 @@ async function renderDashboard() {
         <div class="card-header"><h3>🏖 Leave Balance</h3></div>
         <div class="card-body">
           <div class="leave-bal-list">
-            ${bals.slice(0,5).map(b => {
+            ${bals.map(b => {
               const pct = b.total_days > 0 ? Math.round((b.used_days/b.total_days)*100) : 0;
               const color = pct>80?'var(--red)':pct>50?'var(--yellow)':'var(--green)';
               return `<div class="leave-bal-item">
@@ -3787,17 +3787,17 @@ async function showAdjustDatesModal(tripId) {
 const MOTIVATIONAL_QUOTES = [
   // Indonesian quotes
   "Kesuksesan dimulai dari disiplin diri. Mulai dari sekarang! 💪",
-  "Jangan khawatir tentang kegagalan, khawatir tentang peluang yang terlewat. Harus Ontime",
-  "Setiap hari adalah kesempatan baru untuk menjadi lebih baik. Ontime 🌟",
+  "Jangan khawatir tentang kegagalan, khawatir tentang peluang yang terlewat.",
+  "Setiap hari adalah kesempatan baru untuk menjadi lebih baik. 🌟",
   "Kerja keras hari ini adalah kesuksesan besok. Terus maju! 🚀",
-  "Fokus pada apa yang bisa kamu kontrol, bukan pada apa yang tidak bisa. Tepat waktu adalah salah satu hal yang bisa kamu kontrol!",
+  "Fokus pada apa yang bisa kamu kontrol, bukan pada apa yang tidak bisa.",
   "Ketepatan waktu adalah bentuk penghormatan kepada diri sendiri dan tim.",
-  "Konsistensi adalah kunci untuk mencapai tujuan. Jangan putus semangat! Belajar tempat waktu! 🔑",
+  "Konsistensi adalah kunci untuk mencapai tujuan. Jangan putus semangat! 🔑",
   "Setiap hadir tepat waktu adalah kemenangan kecil menuju kesuksesan besar.",
   "Disiplin bukan hukuman, tapi investasi untuk masa depan yang lebih baik.",
-  "Mulai hari ini dengan tekad kuat untuk menjadi lebih baik. HARUS ONTIME! 💯",
+  "Mulai hari ini dengan tekad kuat untuk menjadi lebih baik. 💯",
   "Waktu adalah aset paling berharga. Hargai setiap detiknya.",
-  "Ketika kamu konsisten, hasil akan datang sendiri. Percaya pada proses, Berusaha tepat waktu! 🌱",
+  "Ketika kamu konsisten, hasil akan datang sendiri. Percaya pada proses! 🌱",
   "Setiap kegagalan adalah pelajaran menuju kesuksesan.",
   "Jangan menunda sampai besok apa yang bisa kamu lakukan hari ini.",
   "Kehadiran tepat waktu mencerminkan profesionalisme dan tanggung jawab.",
@@ -5223,7 +5223,170 @@ function escapeHtml(text) {
 // CSS STYLES FOR ANNOUNCEMENTS
 // ════════════════════════════════════════════════════════════════════════════
 
-// Announcement styles moved to style.css
+const announcementsStyles = `
+.navbar-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid var(--surface-s);
+  gap: 1rem;
+  position: relative;
+}
+
+.navbar-spacer {
+  flex: 1;
+}
+
+.navbar-bell {
+  position: relative;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  transition: transform 0.2s;
+}
+
+.navbar-bell:hover {
+  transform: scale(1.1);
+}
+
+.badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: #ff4757;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  box-shadow: 0 2px 6px rgba(255, 71, 87, 0.5);
+  border: 2px solid white;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.2;
+}
+
+@keyframes badgePulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+.announcements-dropdown {
+  position: absolute;
+  top: 3.5rem;
+  right: 1rem;
+  background: white;
+  border: 1px solid var(--surface-s);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 350px;
+  z-index: 1000;
+}
+
+.dropdown-header {
+  padding: 1rem;
+  border-bottom: 1px solid var(--surface-s);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.announcement-item {
+  padding: 1rem;
+  border-bottom: 1px solid var(--surface-s);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.announcement-item:hover {
+  background: var(--surface-s);
+}
+
+.announcement-item:last-child {
+  border-bottom: none;
+}
+
+.announcement-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.priority-badge {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.announcement-body {
+  color: var(--text-s);
+}
+
+.dropdown-footer {
+  padding: 1rem;
+  border-top: 1px solid var(--surface-s);
+  text-align: center;
+}
+
+.announcement-card {
+  background: white;
+  border: 1px solid var(--surface-s);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.announcement-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.announcement-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.filters {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.text-xs {
+  font-size: 0.75rem;
+}
+
+.text-sm {
+  font-size: 0.875rem;
+}
+
+.text-muted {
+  color: var(--text-s);
+}
+
+.mb-4 {
+  margin-bottom: 1rem;
+}
+`;
+
+// Inject styles
+if (!document.getElementById('announcements-styles')) {
+  const style = document.createElement('style');
+  style.id = 'announcements-styles';
+  style.textContent = announcementsStyles;
+  document.head.appendChild(style);
+}
 
 // Initialize announcements on page load
 function initAnnouncements() {
