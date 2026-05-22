@@ -4085,7 +4085,7 @@ async function renderTrainingManagement() {
 async function loadTrainingList() {
     try {
         const r = await api('GET', '/training/list');
-        const trainings = r.data || [];
+        const trainings = (r.ok && Array.isArray(r.data)) ? r.data : [];
         
         const html = trainings.length === 0 
             ? '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings yet. Create one to get started!</div>'
@@ -4125,7 +4125,8 @@ async function loadTrainingList() {
                                             <td><span style="color:${statusColor};font-weight:600">${status}</span></td>
                                             <td>
                                                 <div class="flex gap-2">
-                                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
+                                                    <button class="btn btn-ghost btn-sm" onclick="showTrainingEnrollments(${t.id})">Enrollments</button>
+                                    <button class="btn btn-ghost btn-sm" onclick="showEditTrainingModal(${JSON.stringify(t).replace(/"/g,'&quot;')})">Edit</button>
                                                     <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >🗑️</button>
                                                 </div>
                                             </td>
@@ -4230,7 +4231,7 @@ async function showCreateTrainingModal() {
         }
         
         try {
-            await api('POST', '/training/create', {
+            const createR = await api('POST', '/training/create', {
                 name,
                 description: document.getElementById('train-desc').value,
                 start_date: startDate,
@@ -4245,7 +4246,13 @@ async function showCreateTrainingModal() {
                 is_mandatory: document.getElementById('train-mandatory').checked
             });
             
+            if (!createR.ok) { showToast('error', createR.data.error || 'Failed to create training'); return; }
             showToast('success', `"${name}" training created!`);
+            if (createR.data && createR.data.id) {
+                const nr = await api('POST', '/training/notify-targets', { training_id: createR.data.id });
+                if (nr.ok) showToast('success', nr.data.notified > 0 ? `${nr.data.notified} employee(s) notified by email.` : 'Training created (no targets to notify).');
+                else showToast('error', 'Training saved but notifications failed: ' + (nr.data.error||''));
+            }
             await loadTrainingList();
         } catch (err) {
             showToast('error', 'Failed to create training');
@@ -4401,9 +4408,17 @@ async function renderTrainingCatalog() {
 
 async function loadCatalogTrainings() {
     try {
-        const r = await api('GET', '/training/available');
+        const [r, enrollR] = await Promise.all([api('GET', '/training/available'), api('GET', '/training/my-enrollments')]);
         const trainings = r.data || [];
-        
+        const enrollMap = {};
+        (enrollR.ok ? enrollR.data || [] : []).forEach(e => { enrollMap[String(e.training_id)] = e; });
+        const getEnrollBtn = (t) => {
+            const e = enrollMap[String(t.id)];
+            if (!e) return '<button class="btn btn-primary" style="width:100%" onclick="enrollTraining(' + t.id + ',\'' + t.name.replace(/\'/g,"\\\\'") + '\')">' + 'Enroll Now</button>';
+            if (e.status === 'invited') return '<div><button id="ack-btn-' + e.id + '" class="btn btn-primary" style="width:100%;background:#7c3aed" onclick="acknowledgeTraining(' + e.id + ', this)">Confirm Participation</button><p style="font-size:11px;color:#7c3aed;margin:6px 0 0;text-align:center">You have been assigned to this training</p></div>';
+            if (e.status === 'acknowledged') return '<button class="btn" style="width:100%;background:#dcfce7;color:#15803d;cursor:default">Participation Confirmed</button>';
+            return '<button class="btn" style="width:100%;background:#f1f5f9;color:#64748b;cursor:default">' + (e.status||'').replace(/_/g,' ') + '</button>';
+        };
         if (trainings.length === 0) {
             document.getElementById('catalog-list').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-s)">No trainings available at the moment.</div>';
             return;
@@ -4430,7 +4445,7 @@ async function loadCatalogTrainings() {
                         </div>
                         
                         <div style="padding:16px">
-                            <button class="btn btn-primary" style="width:100%" onclick="enrollTraining(${t.id}, '${t.name.replace(/'/g, "\\'")}')" >Enroll Now →</button>
+                            ${getEnrollBtn(t)}
                         </div>
                     </div>
                 `).join('')}
@@ -5038,50 +5053,49 @@ function escapeHtml(text) {
 // ════════════════════════════════════════════════════════════════════════════
 
 async function loadAnnouncementsDropdown() {
-  if (state.user.role === 'hr_admin') return; // HR sees manage page instead
-  
+  if (state.user.role === 'hr_admin') return;
   try {
-    const r = await api('GET', '/announcements/all-for-employee');
+    const [r, trainR] = await Promise.all([
+      api('GET', '/announcements/all-for-employee'),
+      api('GET', '/training/my-enrollments')
+    ]);
     if (!r.ok) return;
-    
-    const announcements = (r.data || []).slice(0, 5); // Get 5 latest
-    const unreadCount = announcements.length;
-    
-    // Store current count globally for use when opening modal
+    const announcements = (r.data || []).slice(0, 5);
+    const pendingTrainings = (trainR.ok ? trainR.data || [] : []).filter(e => e.status === 'invited');
+    const unreadCount = announcements.length + pendingTrainings.length;
     state.currentAnnouncementCount = unreadCount;
-    
-    // Get last seen count from localStorage
     const lastSeenCount = parseInt(localStorage.getItem('lastSeenAnnouncementCount') || '0');
-    
-    // Update badge (SVG circle - only show if there are NEW announcements since last seen)
     const badge = document.getElementById('announcement-badge');
-    if (unreadCount > lastSeenCount) {
-      badge.style.display = '';
-    } else {
-      badge.style.display = 'none';
-    }
-    
-    // Update dropdown list
+    if (badge) badge.style.display = unreadCount > lastSeenCount ? '' : 'none';
     const dropdownList = document.getElementById('announcements-list-dropdown');
-    if (announcements.length === 0) {
-      dropdownList.innerHTML = '<p style="padding: 1rem; color: var(--text-s); text-align: center;">No announcements</p>';
-      return;
-    }
-    
-    const html = announcements.map(a => `
+    const trainingHtml = pendingTrainings.map(e => `
+      <div class="announcement-item" style="border-left:3px solid #7c3aed;background:#faf5ff">
+        <div class="announcement-header" style="margin-bottom:6px">
+          <span class="priority-badge" style="background:#ede9fe;color:#5b21b6;font-size:11px">Training</span>
+          <strong style="flex:1;font-size:13px">${escapeHtml(e.training_name || 'Training Program')}</strong>
+        </div>
+        <div class="announcement-body text-sm" style="color:#374151">
+          A training has been assigned to <strong>${escapeHtml(state.user.name || 'you')}</strong>.
+          Please check the Training Catalog to confirm your participation.
+        </div>
+        <div style="margin-top:8px">
+          <a href="#" onclick="navigate('training-catalog');toggleAnnouncementsDropdown();return false;"
+             style="font-size:12px;color:#7c3aed;font-weight:600;text-decoration:none">Go to Training &amp; Certs</a>
+        </div>
+      </div>
+    `).join('');
+    const announcementHtml = announcements.map(a => `
       <div class="announcement-item">
         <div class="announcement-header">
-          <span class="priority-badge" style="background: ${getPriorityColor(a.priority)};">
-            ${getPriorityEmoji(a.priority)}
-          </span>
-          <strong style="flex: 1;">${escapeHtml(a.title)}</strong>
+          <span class="priority-badge" style="background:${getPriorityColor(a.priority)}">${getPriorityEmoji(a.priority)}</span>
+          <strong style="flex:1">${escapeHtml(a.title)}</strong>
           <span class="text-xs text-muted">${new Date(a.expires_at).toLocaleDateString()}</span>
         </div>
         <div class="announcement-body text-sm">${escapeHtml(a.body.substring(0, 80))}...</div>
       </div>
     `).join('');
-    
-    dropdownList.innerHTML = html;
+    const combined = trainingHtml + announcementHtml;
+    dropdownList.innerHTML = combined || '<p style="padding:1rem;color:var(--text-s);text-align:center">No new notifications</p>';
   } catch (e) {
     console.error('Error loading announcements:', e);
   }
@@ -5525,4 +5539,39 @@ async function renderCutiAdmin() {
   };
 
   await loadAndRender();
+}
+
+// ── Training: notification / acknowledgement functions ───────────────────────
+async function acknowledgeTraining(enrollmentId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Confirming...'; btn.style.background = '#94a3b8'; }
+  const r = await api('POST', '/training/acknowledge', { enrollment_id: enrollmentId });
+  if (r.ok) {
+    if (btn && btn.parentElement) {
+      btn.parentElement.innerHTML =
+        '<button class="btn" style="width:100%;background:#dcfce7;color:#15803d;cursor:default;font-weight:600">Participation Confirmed</button>'
+        + '<p style="font-size:11px;color:#15803d;margin:6px 0 0;text-align:center">HR and your manager have been notified</p>';
+    }
+    showToast('success', 'Participation confirmed! HR and your manager have been notified.');
+    await loadAnnouncementsDropdown();
+  } else {
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Participation'; btn.style.background = '#7c3aed'; }
+    showToast('error', r.data.error || 'Failed to confirm participation');
+  }
+}
+
+async function showTrainingEnrollments(trainingId) {
+  const r = await api('GET', '/training/enrollments?training_id=' + trainingId);
+  const list = r.ok ? r.data || [] : [];
+  const rows = list.length
+    ? list.map(e => '<tr><td>' + (e.user_name||'') + '</td><td>' + (e.status||'').replace(/_/g,' ') + '</td><td>' + (e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending') + '</td></tr>').join('')
+    : '<tr><td colspan="3" style="text-align:center;padding:12px;color:#64748b">No enrollments yet</td></tr>';
+  showModal('Enrollment Status',
+    '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' + rows + '</tbody></table>');
+}
+
+async function sendTrainingReminders() {
+  if (!confirm('Send reminder emails to all employees with training tomorrow?')) return;
+  const r = await api('POST', '/training/send-reminders', {});
+  if (r.ok) showToast('success', r.data.reminders_sent + ' reminder(s) sent.');
+  else showToast('error', r.data.error || 'Failed to send reminders');
 }
