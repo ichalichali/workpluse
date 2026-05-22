@@ -646,6 +646,7 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_cert_user ON training_certificates(user_id);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_cert_expiry ON training_certificates(expiry_date);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_cert_status ON training_certificates(status);")
+        c.execute("ALTER TABLE training_certificates ADD COLUMN IF NOT EXISTS cert_name TEXT")
         
         c.execute("""
             CREATE TABLE IF NOT EXISTS training_reminders (
@@ -3708,63 +3709,50 @@ def reject_enrollment(enroll_id):
 
 @app.route('/api/training/certificate/submit', methods=['POST'])
 def submit_certificate():
-    """Employee submits certificate after training"""
+    """Employee submits a certificate — training_id is optional for standalone certs."""
     err = require_login()
     if err: return err
-    
-    data = request.get_json()
+    data = request.get_json() or {}
     user_id = session['user_id']
-    
-    conn = get_db()
-    c = conn.cursor()
+    training_id = data.get('training_id') or None
+    cert_name = data.get('cert_name', '').strip() or None
+    conn = get_db(); c = conn.cursor()
     try:
         c.execute("""
-            INSERT INTO training_certificates (user_id, training_id, enrollment_id, certificate_number, issued_date, expiry_date, issuer_name, notes, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending_approval')
+            INSERT INTO training_certificates
+                (user_id, training_id, enrollment_id, cert_name, certificate_number,
+                 issued_date, expiry_date, issuer_name, notes, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending_approval')
             RETURNING id
-        """, (
-            user_id,
-            data.get('training_id'),
-            data.get('enrollment_id'),
-            data.get('certificate_number'),
-            data.get('issued_date'),
-            data.get('expiry_date'),
-            data.get('issuer_name'),
-            data.get('notes')
-        ))
-        
-        cert_id = c.fetchone()[0]
-        
-        # Get training name
-        c.execute("SELECT name FROM trainings WHERE id=%s", (data.get('training_id'),))
-        training_name = c.fetchone()[0]
-        
-        # Get user's manager
-        c.execute("SELECT id, email FROM users WHERE id=(SELECT manager_id FROM users WHERE id=%s)", (user_id,))
-        manager = c.fetchone()
-        
-        # Audit
-        c.execute("""
-            INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address, user_agent)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (user_id, 'training_cert_submit', 'certificate', cert_id, '', ''))
-        
+        """, (user_id, training_id, data.get('enrollment_id'), cert_name,
+              data.get('certificate_number'), data.get('issued_date'),
+              data.get('expiry_date'), data.get('issuer_name'), data.get('notes')))
+        cert_id = c.fetchone()['id']
+        # Resolve display name
+        if training_id:
+            c.execute("SELECT name FROM trainings WHERE id=%s", (training_id,))
+            row = c.fetchone()
+            display_name = row['name'] if row else cert_name or 'Certificate'
+        else:
+            display_name = cert_name or 'Certificate'
+        # Get user info + manager
+        c.execute("""SELECT u.name, m.email as mgr_email
+                     FROM users u LEFT JOIN users m ON u.manager_id=m.id
+                     WHERE u.id=%s""", (user_id,))
+        emp = c.fetchone()
+        log_audit(c, user_id, 'training_cert_submit', entity_type='certificate', entity_id=cert_id)
         conn.commit()
+        # Email manager
+        if emp and emp.get('mgr_email'):
+            html = (f'<p><strong>{emp["name"]}</strong> has submitted a certificate: '
+                    f'<strong>{display_name}</strong>. Please log in to OnTime to review and approve.</p>')
+            send_email(emp['mgr_email'], f'[OnTime] Certificate Submitted: {display_name}', html)
         conn.close()
-        
-        # Send email to manager
-        if manager:
-            send_email(
-                manager[1],
-                'Training Certificate Submitted',
-                f'An employee has submitted a certificate for {training_name}. Please review and approve.'
-            )
-        
         return jsonify({'id': cert_id, 'status': 'pending_approval', 'ok': True})
     except Exception as e:
-        conn.rollback()
-        conn.close()
-        return {'error': str(e)}, 400
+        conn.rollback(); conn.close()
+        sys.stderr.write(f"[submit_certificate] {e}\n")
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/api/training/my-certificates', methods=['GET'])
 def get_my_certificates():
@@ -3776,28 +3764,21 @@ def get_my_certificates():
     c = conn.cursor()
     
     c.execute("""
-        SELECT tc.id, t.name AS training_name, tc.certificate_number, tc.issued_date, tc.expiry_date, tc.issuer_name, tc.status, tc.created_at
+        SELECT tc.id,
+               COALESCE(t.name, tc.cert_name, 'Standalone Certificate') AS training_name,
+               tc.cert_name, tc.certificate_number, tc.issued_date, tc.expiry_date,
+               tc.issuer_name, tc.notes, tc.status, tc.created_at
         FROM training_certificates tc
-        JOIN trainings t ON tc.training_id = t.id
+        LEFT JOIN trainings t ON tc.training_id = t.id
         WHERE tc.user_id = %s
-        ORDER BY tc.expiry_date ASC
+        ORDER BY tc.issued_date DESC NULLS LAST
     """, (user_id,))
-    
     rows = c.fetchall()
     result = []
     for row in rows:
-        days_to_expiry = (row['expiry_date'] - date.today()).days if row['expiry_date'] else None
-        result.append({
-            'id': row['id'],
-            'training_name': row['training_name'],
-            'certificate_number': row['certificate_number'],
-            'issued_date': row['issued_date'].isoformat() if row['issued_date'] else None,
-            'expiry_date': row['expiry_date'].isoformat() if row['expiry_date'] else None,
-            'issuer_name': row['issuer_name'],
-            'status': row['status'],
-            'days_to_expiry': days_to_expiry,
-            'created_at': row['created_at'].isoformat() if row['created_at'] else None
-        })
+        r = _row(row)
+        r['days_to_expiry'] = (row['expiry_date'] - date.today()).days if row['expiry_date'] else None
+        result.append(r)
     conn.close()
     return jsonify(result)
 

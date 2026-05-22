@@ -4398,12 +4398,30 @@ async function renderTrainingCatalog() {
     const el = document.getElementById('page-content');
     el.innerHTML = `
         <div class="page-header">
-            <div><h1>🎓 Available Training Programs</h1><p>Enroll in training to develop your skills</p></div>
+            <div><h1>🎓 Training & Certifications</h1><p>Manage your training programs and professional certificates</p></div>
         </div>
-        <div id="catalog-list">Loading…</div>
+        <div style="display:flex;gap:8px;margin-bottom:24px;border-bottom:2px solid #e2e8f0;padding-bottom:0">
+            <button id="tab-catalog" onclick="switchTrainingTab('catalog')"
+                style="padding:10px 20px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;color:#2563eb;border-bottom:2px solid #2563eb;margin-bottom:-2px">
+                Available Trainings
+            </button>
+            <button id="tab-mycerts" onclick="switchTrainingTab('mycerts')"
+                style="padding:10px 20px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px">
+                My Certificates
+            </button>
+        </div>
+        <div id="tab-content-catalog"><div id="catalog-list"><div style="text-align:center;padding:40px;color:#64748b">Loading…</div></div></div>
+        <div id="tab-content-mycerts" style="display:none"></div>
     `;
-    
     await loadCatalogTrainings();
+}
+
+function switchTrainingTab(tab) {
+    document.getElementById('tab-content-catalog').style.display = tab === 'catalog' ? '' : 'none';
+    document.getElementById('tab-content-mycerts').style.display = tab === 'mycerts' ? '' : 'none';
+    document.getElementById('tab-catalog').style.cssText = 'padding:10px 20px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;margin-bottom:-2px;' + (tab==='catalog'?'color:#2563eb;border-bottom:2px solid #2563eb':'color:#64748b;border-bottom:2px solid transparent');
+    document.getElementById('tab-mycerts').style.cssText = 'padding:10px 20px;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;margin-bottom:-2px;' + (tab==='mycerts'?'color:#2563eb;border-bottom:2px solid #2563eb':'color:#64748b;border-bottom:2px solid transparent');
+    if (tab === 'mycerts') loadMyCertificates();
 }
 
 async function loadCatalogTrainings() {
@@ -4456,6 +4474,124 @@ async function loadCatalogTrainings() {
     } catch (err) {
         console.error('Error loading catalog:', err);
         showToast('error', 'Failed to load trainings');
+    }
+}
+
+async function loadMyCertificates() {
+    const el = document.getElementById('tab-content-mycerts');
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b">Loading…</div>';
+    const r = await api('GET', '/training/my-certificates');
+    const certs = (r.ok && Array.isArray(r.data)) ? r.data : [];
+
+    const statusBadge = (c) => {
+        if (c.status === 'approved') {
+            if (c.days_to_expiry === null) return '<span style="background:#dcfce7;color:#15803d;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">✅ Approved</span>';
+            if (c.days_to_expiry < 0) return '<span style="background:#fee2e2;color:#991b1b;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">❌ Expired</span>';
+            if (c.days_to_expiry <= 30) return '<span style="background:#fef3c7;color:#92400e;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">⚠️ Expiring in ' + c.days_to_expiry + 'd</span>';
+            return '<span style="background:#dcfce7;color:#15803d;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">✅ Approved</span>';
+        }
+        if (c.status === 'rejected') return '<span style="background:#fee2e2;color:#991b1b;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">❌ Rejected</span>';
+        return '<span style="background:#fef3c7;color:#92400e;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">⏳ Pending Approval</span>';
+    };
+
+    const addBtn = '<button class="btn btn-primary" onclick="showAddCertModal()" style="margin-bottom:20px">+ Add Certificate</button>';
+
+    if (certs.length === 0) {
+        el.innerHTML = addBtn + '<div style="text-align:center;padding:60px;color:#64748b;background:#f8fafc;border-radius:12px;border:2px dashed #e2e8f0">' +
+            '<div style="font-size:48px;margin-bottom:16px">📜</div>' +
+            '<p style="font-weight:600;color:#374151;margin:0 0 8px">No certificates yet</p>' +
+            '<p style="margin:0;font-size:13px">Click "+ Add Certificate" to record your professional certificates</p></div>';
+        return;
+    }
+
+    const rows = certs.map(c => `
+        <tr>
+            <td style="font-weight:600">${escapeHtml(c.training_name||'')}</td>
+            <td>${escapeHtml(c.issuer_name||'—')}</td>
+            <td style="font-family:monospace;font-size:13px">${escapeHtml(c.certificate_number||'—')}</td>
+            <td>${c.issued_date ? c.issued_date.slice(0,10) : '—'}</td>
+            <td>${c.expiry_date ? c.expiry_date.slice(0,10) : 'No Expiry'}</td>
+            <td>${statusBadge(c)}</td>
+        </tr>`).join('');
+
+    el.innerHTML = addBtn + `
+        <div class="table-wrap">
+            <table style="width:100%;border-collapse:collapse">
+                <thead><tr style="background:#f8fafc;text-align:left">
+                    <th style="padding:12px 16px;font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Certificate</th>
+                    <th style="padding:12px 16px;font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Issuer</th>
+                    <th style="padding:12px 16px;font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Cert Number</th>
+                    <th style="padding:12px 16px;font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Issued</th>
+                    <th style="padding:12px 16px;font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Expires</th>
+                    <th style="padding:12px 16px;font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase">Status</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+}
+
+function showAddCertModal() {
+    const today = new Date().toISOString().slice(0,10);
+    showModal('Add Certificate', `
+        <div style="display:flex;flex-direction:column;gap:14px">
+            <div class="form-group" style="margin:0">
+                <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px">Certificate Name *</label>
+                <input id="cert-name" placeholder="e.g. OJK Broker License, AWS Solutions Architect" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;box-sizing:border-box"/>
+            </div>
+            <div class="form-group" style="margin:0">
+                <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px">Issuer / Institution *</label>
+                <input id="cert-issuer" placeholder="e.g. OJK, Amazon Web Services, PMI" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;box-sizing:border-box"/>
+            </div>
+            <div class="form-group" style="margin:0">
+                <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px">Certificate Number</label>
+                <input id="cert-number" placeholder="e.g. OJK-2024-12345 (optional)" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;box-sizing:border-box"/>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div class="form-group" style="margin:0">
+                    <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px">Issue Date *</label>
+                    <input id="cert-issued" type="date" max="${today}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;box-sizing:border-box"/>
+                </div>
+                <div class="form-group" style="margin:0">
+                    <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px">Expiry Date</label>
+                    <input id="cert-expiry" type="date" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;box-sizing:border-box"/>
+                    <p style="font-size:11px;color:#64748b;margin:4px 0 0">Leave blank if no expiry</p>
+                </div>
+            </div>
+            <div class="form-group" style="margin:0">
+                <label style="font-size:13px;font-weight:600;color:#374151;display:block;margin-bottom:6px">Notes</label>
+                <textarea id="cert-notes" placeholder="Additional info, score, grade..." rows="2" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;resize:vertical;box-sizing:border-box"></textarea>
+            </div>
+        </div>
+    `, submitAddCert);
+}
+
+async function submitAddCert() {
+    const certName  = document.getElementById('cert-name')?.value.trim();
+    const issuer    = document.getElementById('cert-issuer')?.value.trim();
+    const number    = document.getElementById('cert-number')?.value.trim();
+    const issued    = document.getElementById('cert-issued')?.value;
+    const expiry    = document.getElementById('cert-expiry')?.value || null;
+    const notes     = document.getElementById('cert-notes')?.value.trim();
+
+    if (!certName) { showToast('error', 'Certificate name is required'); return; }
+    if (!issuer)   { showToast('error', 'Issuer is required'); return; }
+    if (!issued)   { showToast('error', 'Issue date is required'); return; }
+
+    const r = await api('POST', '/training/certificate/submit', {
+        cert_name: certName,
+        issuer_name: issuer,
+        certificate_number: number || null,
+        issued_date: issued,
+        expiry_date: expiry,
+        notes: notes || null
+    });
+
+    if (r.ok) {
+        showToast('success', 'Certificate submitted! Pending HR/Manager approval.');
+        document.querySelector('.modal-overlay')?.remove();
+        await loadMyCertificates();
+    } else {
+        showToast('error', r.data.error || 'Failed to submit certificate');
     }
 }
 
