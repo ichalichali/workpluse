@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import smtplib
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -816,40 +817,51 @@ def check_and_transition_probation():
         sys.stderr.flush()
 
 def send_email(to_addr,subject,html_body):
-    """Send email using Resend API (no SMTP issues on Railway)."""
+    """Send email using Gmail SMTP."""
     if get_setting('email_enabled')!='1': return False,'Email not enabled'
-    # Read from environment first, then fall back to app_settings
-    import os
-    api_key=os.environ.get('RESEND_API_KEY') or get_setting('resend_api_key')
-    frm=os.environ.get('RESEND_FROM_EMAIL') or get_setting('smtp_from')
-    if not api_key: return False,'Resend API key not configured'
-    if not frm: return False,'Sender email not configured'
+    
+    # Read SMTP settings from environment variables
+    smtp_host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+    smtp_port = int(os.environ.get('SMTP_PORT', 587))
+    smtp_user = os.environ.get('SMTP_USER')
+    smtp_pass = os.environ.get('SMTP_PASSWORD')
+    smtp_from = os.environ.get('SMTP_FROM_EMAIL')
+    
+    if not smtp_user or not smtp_pass: 
+        return False,'SMTP credentials not configured'
+    if not smtp_from: 
+        return False,'Sender email not configured'
+    
     try:
-        import requests
-        sys.stderr.write(f"[send_email] Sending via Resend API to {to_addr}...\n")
+        sys.stderr.write(f"[send_email] Sending via SMTP to {to_addr}...\n")
         sys.stderr.flush()
-        response=requests.post("https://api.resend.com/emails",headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"},json={"from":frm,"to":to_addr,"subject":subject,"html":html_body},timeout=10)
-        if response.status_code==200:
-            sys.stderr.write(f"[send_email] ✅ Email sent to {to_addr}\n")
-            sys.stderr.flush()
-            return True,'sent'
-        else:
-            error_msg=response.json().get('message',response.text) if response.text else f"HTTP {response.status_code}"
-            sys.stderr.write(f"[send_email] ❌ Failed: {error_msg}\n")
-            sys.stderr.flush()
-            return False,f"Resend error: {error_msg}"
-    except requests.exceptions.Timeout as e:
-        err=f"Request timeout - Resend API not responding"
+        
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = smtp_from
+        msg['To'] = to_addr
+        msg.attach(MIMEText(html_body, 'html'))
+        
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        
+        sys.stderr.write(f"[send_email] ✅ Email sent to {to_addr}\n")
+        sys.stderr.flush()
+        return True,'sent'
+    except smtplib.SMTPAuthenticationError as e:
+        err = f"SMTP authentication failed: {str(e)}"
         sys.stderr.write(f"[send_email] ❌ {err}\n")
         sys.stderr.flush()
         return False,err
-    except requests.exceptions.ConnectionError as e:
-        err=f"Connection error: {str(e)}"
+    except smtplib.SMTPException as e:
+        err = f"SMTP error: {str(e)}"
         sys.stderr.write(f"[send_email] ❌ {err}\n")
         sys.stderr.flush()
         return False,err
     except Exception as e:
-        err=f"{type(e).__name__}: {str(e)}"
+        err = f"{type(e).__name__}: {str(e)}"
         sys.stderr.write(f"[send_email] ❌ {err}\n")
         sys.stderr.flush()
         return False,err
