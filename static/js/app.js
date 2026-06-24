@@ -1455,6 +1455,8 @@ async function showApplyModal() {
   window.lcToggle = (dateStr) => {
     if (selectedDates.has(dateStr)) selectedDates.delete(dateStr);
     else selectedDates.add(dateStr);
+    const alertEl = document.getElementById('apply-alert');
+    if (alertEl) alertEl.innerHTML = '';
     renderCalendar();
   };
 
