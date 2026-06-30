@@ -3273,6 +3273,66 @@ def create_training():
         conn.close()
         return {'error': str(e)}, 400
 
+@app.route('/api/training/notify-targets', methods=['POST'])
+def notify_training_targets():
+    """Email all employees targeted by a training program."""
+    if session.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
+    data = request.get_json()
+    training_id = data.get('training_id')
+    if not training_id: return {'error': 'training_id required'}, 400
+
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            SELECT name, description, start_date, end_date, location, target_type,
+                   target_department_id, target_role, target_user_ids_json
+            FROM trainings WHERE id=%s
+        """, (training_id,))
+        t = c.fetchone()
+        if not t:
+            conn.close()
+            return {'error': 'Training not found'}, 404
+
+        target_type = t['target_type']
+        if target_type == 'all':
+            c.execute("SELECT id, email FROM users WHERE role='employee'")
+        elif target_type == 'department':
+            c.execute("SELECT id, email FROM users WHERE branch_id=%s", (t['target_department_id'],))
+        elif target_type == 'role':
+            c.execute("SELECT id, email FROM users WHERE role=%s", (t['target_role'],))
+        elif target_type == 'user':
+            ids = json.loads(t['target_user_ids_json']) if t['target_user_ids_json'] else []
+            if not ids:
+                conn.close()
+                return jsonify({'ok': True, 'notified': 0})
+            c.execute("SELECT id, email FROM users WHERE id = ANY(%s)", (ids,))
+        else:
+            conn.close()
+            return jsonify({'ok': True, 'notified': 0})
+
+        targets = c.fetchall()
+        conn.close()
+
+        notified = 0
+        for u in targets:
+            if not u.get('email'): continue
+            ok, _ = send_email(
+                u['email'],
+                f"New Training: {t['name']}",
+                f"<p>You have been assigned to a new training program: <strong>{t['name']}</strong></p>"
+                f"<p>{t.get('description') or ''}</p>"
+                f"<p>Dates: {t['start_date']} to {t['end_date']}</p>"
+                f"<p>Location: {t.get('location') or 'TBA'}</p>"
+                f"<p>Please check the Training Catalog to confirm your participation.</p>"
+            )
+            if ok: notified += 1
+
+        return jsonify({'ok': True, 'notified': notified})
+    except Exception as e:
+        conn.close()
+        return {'error': str(e)}, 400
+
 @app.route('/api/training/list', methods=['GET'])
 def list_trainings():
     if session.get('role') not in ['hr_admin', 'manager']: return {'error': 'Unauthorized'}, 403
