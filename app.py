@@ -3257,7 +3257,7 @@ def create_training():
             data.get('target_user_ids_json'),
             session['user_id']
         ))
-        training_id = c.fetchone()[0]
+        training_id = c.fetchone()['id']
         
         # Audit log
         c.execute("""
@@ -3476,11 +3476,11 @@ def enroll_training():
             RETURNING id
         """, (user_id, training_id))
         
-        enroll_id = c.fetchone()[0]
+        enroll_id = c.fetchone()['id']
         
         # Get training details for email
         c.execute("SELECT name FROM trainings WHERE id=%s", (training_id,))
-        training_name = c.fetchone()[0]
+        training_name = c.fetchone()['name']
         
         # Get user's manager
         c.execute("""
@@ -3606,12 +3606,12 @@ def approve_enrollment(enroll_id):
             conn.close()
             return {'error': 'Enrollment not found'}, 404
         
-        user_id, training_id = enroll
+        user_id, training_id = enroll['user_id'], enroll['training_id']
         
         # Get training dates
         c.execute("SELECT start_date, end_date, name FROM trainings WHERE id=%s", (training_id,))
         train = c.fetchone()
-        start_date, end_date, training_name = train
+        start_date, end_date, training_name = train['start_date'], train['end_date'], train['name']
         
         # Update enrollment
         c.execute("""
@@ -3642,7 +3642,7 @@ def approve_enrollment(enroll_id):
         # Send email to employee
         c = get_db().cursor()
         c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
-        employee_email = c.fetchone()[0]
+        employee_email = c.fetchone()['email']
         send_email(employee_email, f'Training Enrollment Approved', f'Your enrollment in {training_name} has been approved.')
         
         return jsonify({'ok': True})
@@ -3671,7 +3671,7 @@ def reject_enrollment(enroll_id):
             conn.close()
             return {'error': 'Enrollment not found'}, 404
         
-        user_id, training_id = enroll
+        user_id, training_id = enroll['user_id'], enroll['training_id']
         
         # Update enrollment
         c.execute("""
@@ -3682,7 +3682,7 @@ def reject_enrollment(enroll_id):
         
         # Get training name
         c.execute("SELECT name FROM trainings WHERE id=%s", (training_id,))
-        training_name = c.fetchone()[0]
+        training_name = c.fetchone()['name']
         
         # Audit
         c.execute("""
@@ -3696,7 +3696,7 @@ def reject_enrollment(enroll_id):
         # Send email to employee
         c = get_db().cursor()
         c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
-        employee_email = c.fetchone()[0]
+        employee_email = c.fetchone()['email']
         send_email(employee_email, f'Training Enrollment Rejected', f'Your enrollment in {training_name} has been rejected.\nReason: {reason}')
         
         return jsonify({'ok': True})
@@ -3958,7 +3958,7 @@ def reject_certificate(cert_id):
         # Send email to employee
         c = get_db().cursor()
         c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
-        emp_email = c.fetchone()[0]
+        emp_email = c.fetchone()['email']
         send_email(emp_email, 'Certificate Rejection', f'Your certificate {cert_number} was rejected.\nReason: {reason}')
         
         return jsonify({'ok': True})
@@ -3979,29 +3979,29 @@ def get_training_dashboard():
     
     # Expiring in 30 days
     c.execute("""
-        SELECT COUNT(*) FROM training_certificates
+        SELECT COUNT(*) AS cnt FROM training_certificates
         WHERE status='approved' AND expiry_date = CURRENT_DATE + 30
     """)
-    expiring_soon = c.fetchone()[0]
+    expiring_soon = c.fetchone()['cnt']
     
     # Expired
     c.execute("""
-        SELECT COUNT(*) FROM training_certificates
+        SELECT COUNT(*) AS cnt FROM training_certificates
         WHERE status='approved' AND expiry_date < CURRENT_DATE
     """)
-    expired = c.fetchone()[0]
+    expired = c.fetchone()['cnt']
     
     # Compliance rate
     c.execute("""
-        SELECT COUNT(*) FROM users WHERE role='employee'
+        SELECT COUNT(*) AS cnt FROM users WHERE role='employee'
     """)
-    total_employees = c.fetchone()[0]
+    total_employees = c.fetchone()['cnt']
     
     c.execute("""
-        SELECT COUNT(DISTINCT user_id) FROM training_certificates
+        SELECT COUNT(DISTINCT user_id) AS cnt FROM training_certificates
         WHERE status='approved' AND expiry_date >= CURRENT_DATE
     """)
-    compliant = c.fetchone()[0]
+    compliant = c.fetchone()['cnt']
     
     compliance_rate = (compliant / total_employees * 100) if total_employees > 0 else 0
     
