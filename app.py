@@ -3606,34 +3606,56 @@ def get_my_enrollments():
 
 @app.route('/api/training/enrollments', methods=['GET'])
 def get_enrollments():
-    """Get pending/all enrollments - Manager/HR can see team/company"""
+    """Get enrollments - Manager/HR can see team/company"""
     if session.get('role') not in ['manager', 'hr_admin']: return {'error': 'Unauthorized'}, 403
-    
-    status_filter = request.args.get('status', 'pending_approval')
+    training_id = request.args.get('training_id', type=int)
+    status_filter = request.args.get('status')
     conn = get_db()
     c = conn.cursor()
-    
-    if session.get('role') == 'manager':
-        # Manager sees team enrollments
-        c.execute("""
-            SELECT te.id, te.user_id, u.name AS user_name, te.training_id, t.name AS training_name, te.status, te.enrolled_at
-            FROM training_enrollments te
-            JOIN trainings t ON te.training_id = t.id
-            JOIN users u ON te.user_id = u.id
-            WHERE u.manager_id = %s AND te.status = %s
-            ORDER BY te.enrolled_at DESC
-        """, (session['user_id'], status_filter))
+    if training_id:
+        # Viewing enrollments for a specific training — show all statuses
+        if session.get('role') == 'manager':
+            c.execute("""
+                SELECT te.id, te.user_id, u.name AS user_name, te.training_id, t.name AS training_name,
+                       te.status, te.enrolled_at, te.manager_approved_at
+                FROM training_enrollments te
+                JOIN trainings t ON te.training_id = t.id
+                JOIN users u ON te.user_id = u.id
+                WHERE te.training_id = %s AND u.manager_id = %s
+                ORDER BY te.enrolled_at DESC
+            """, (training_id, session['user_id']))
+        else:
+            c.execute("""
+                SELECT te.id, te.user_id, u.name AS user_name, te.training_id, t.name AS training_name,
+                       te.status, te.enrolled_at, te.manager_approved_at
+                FROM training_enrollments te
+                JOIN trainings t ON te.training_id = t.id
+                JOIN users u ON te.user_id = u.id
+                WHERE te.training_id = %s
+                ORDER BY te.enrolled_at DESC
+            """, (training_id,))
     else:
-        # HR sees all
-        c.execute("""
-            SELECT te.id, te.user_id, u.name AS user_name, te.training_id, t.name AS training_name, te.status, te.enrolled_at
-            FROM training_enrollments te
-            JOIN trainings t ON te.training_id = t.id
-            JOIN users u ON te.user_id = u.id
-            WHERE te.status = %s
-            ORDER BY te.enrolled_at DESC
-        """, (status_filter,))
-    
+        sf = status_filter or 'pending_approval'
+        if session.get('role') == 'manager':
+            c.execute("""
+                SELECT te.id, te.user_id, u.name AS user_name, te.training_id, t.name AS training_name,
+                       te.status, te.enrolled_at, te.manager_approved_at
+                FROM training_enrollments te
+                JOIN trainings t ON te.training_id = t.id
+                JOIN users u ON te.user_id = u.id
+                WHERE u.manager_id = %s AND te.status = %s
+                ORDER BY te.enrolled_at DESC
+            """, (session['user_id'], sf))
+        else:
+            c.execute("""
+                SELECT te.id, te.user_id, u.name AS user_name, te.training_id, t.name AS training_name,
+                       te.status, te.enrolled_at, te.manager_approved_at
+                FROM training_enrollments te
+                JOIN trainings t ON te.training_id = t.id
+                JOIN users u ON te.user_id = u.id
+                WHERE te.status = %s
+                ORDER BY te.enrolled_at DESC
+            """, (sf,))
     rows = c.fetchall()
     result = []
     for row in rows:
@@ -3644,7 +3666,8 @@ def get_enrollments():
             'training_id': row['training_id'],
             'training_name': row['training_name'],
             'status': row['status'],
-            'enrolled_at': row['enrolled_at'].isoformat() if row['enrolled_at'] else None
+            'enrolled_at': row['enrolled_at'].isoformat() if row['enrolled_at'] else None,
+            'acknowledged_at': row['manager_approved_at'].isoformat() if row['manager_approved_at'] else None,
         })
     conn.close()
     return jsonify(result)
@@ -3696,6 +3719,17 @@ def approve_enrollment(enroll_id):
             VALUES (%s, %s, %s, %s, %s, %s)
         """, (session['user_id'], 'training_enroll_approve', 'enrollment', enroll_id, '', ''))
         
+        # System notification — push to announcements as personal bell notification
+        c.execute("""
+            INSERT INTO announcements (title, body, priority, created_by, audience_type, audience_user_ids_json, expires_at)
+            VALUES (%s, %s, 'normal', %s, 'users', %s, NOW() + INTERVAL '30 days')
+        """, (
+            f'Training Enrollment Approved: {training_name}',
+            f'Your enrollment in <strong>{training_name}</strong> has been approved. The training runs from {start_date} to {end_date}. Your attendance has been pre-marked for those dates.',
+            session['user_id'],
+            json.dumps([user_id])
+        ))
+        
         conn.commit()
         conn.close()
         
@@ -3703,7 +3737,13 @@ def approve_enrollment(enroll_id):
         c = get_db().cursor()
         c.execute("SELECT email FROM users WHERE id=%s", (user_id,))
         employee_email = c.fetchone()['email']
-        send_email(employee_email, f'Training Enrollment Approved', f'Your enrollment in {training_name} has been approved.')
+        send_email(
+            employee_email,
+            f'Training Enrollment Approved: {training_name}',
+            f'<p>Hi,</p><p>Your enrollment in <strong>{training_name}</strong> has been approved.</p>'
+            f'<p>Training period: <strong>{start_date}</strong> to <strong>{end_date}</strong></p>'
+            f'<p>Your attendance has been pre-marked as "Training" for these dates.</p>'
+        )
         
         return jsonify({'ok': True})
     except Exception as e:

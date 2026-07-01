@@ -5700,12 +5700,39 @@ async function acknowledgeTraining(enrollmentId, btn) {
 async function showTrainingEnrollments(trainingId) {
   const r = await api('GET', '/training/enrollments?training_id=' + trainingId);
   const list = r.ok ? r.data || [] : [];
+  const isManager = state.user.role === 'manager' || state.user.role === 'hr_admin';
   const rows = list.length
-    ? list.map(e => '<tr><td>' + (e.user_name||'') + '</td><td>' + (e.status||'').replace(/_/g,' ') + '</td><td>' + (e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending') + '</td></tr>').join('')
-    : '<tr><td colspan="3" style="text-align:center;padding:12px;color:#64748b">No enrollments yet</td></tr>';
+    ? list.map(e => {
+        const isPending = e.status === 'pending_approval';
+        const actionBtns = (isManager && isPending)
+          ? `<button class="btn btn-ghost btn-sm" style="color:var(--blue);font-size:11px" onclick="approveEnrollment(${e.id}, ${trainingId})">Approve</button>
+             <button class="btn btn-ghost btn-sm" style="color:var(--red);font-size:11px" onclick="rejectEnrollment(${e.id}, ${trainingId})">Reject</button>`
+          : '—';
+        return `<tr>
+          <td>${e.user_name||''}</td>
+          <td>${(e.status||'').replace(/_/g,' ')}</td>
+          <td>${e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending'}</td>
+          <td>${actionBtns}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="4" style="text-align:center;padding:12px;color:#64748b">No enrollments yet</td></tr>';
   showModal('Enrollment Status',
-    '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' + rows + '</tbody></table>',
+    '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th><th>Action</th></tr></thead><tbody>' + rows + '</tbody></table>',
     () => true);
+}
+
+async function approveEnrollment(enrollId, trainingId) {
+  const r = await api('POST', `/training/enroll/${enrollId}/approve`);
+  if (r.ok) { showToast('success', 'Enrollment approved'); showTrainingEnrollments(trainingId); }
+  else showToast('error', r.data?.error || 'Failed to approve');
+}
+
+async function rejectEnrollment(enrollId, trainingId) {
+  const reason = prompt('Reason for rejection:');
+  if (!reason) return;
+  const r = await api('POST', `/training/enroll/${enrollId}/reject`, { rejection_reason: reason });
+  if (r.ok) { showToast('success', 'Enrollment rejected'); showTrainingEnrollments(trainingId); }
+  else showToast('error', r.data?.error || 'Failed to reject');
 }
 
 async function sendTrainingReminders() {
