@@ -5704,7 +5704,8 @@ async function showTrainingEnrollments(trainingId) {
     ? list.map(e => '<tr><td>' + (e.user_name||'') + '</td><td>' + (e.status||'').replace(/_/g,' ') + '</td><td>' + (e.acknowledged_at ? String(e.acknowledged_at).slice(0,10) : 'Pending') + '</td></tr>').join('')
     : '<tr><td colspan="3" style="text-align:center;padding:12px;color:#64748b">No enrollments yet</td></tr>';
   showModal('Enrollment Status',
-    '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' + rows + '</tbody></table>');
+    '<table style="width:100%"><thead><tr><th>Employee</th><th>Status</th><th>Acknowledged</th></tr></thead><tbody>' + rows + '</tbody></table>',
+    () => true);
 }
 
 async function sendTrainingReminders() {
