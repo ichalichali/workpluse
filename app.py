@@ -4037,7 +4037,7 @@ def reject_certificate(cert_id):
             conn.close()
             return {'error': 'Certificate not found'}, 404
         
-        user_id, cert_number = cert
+        user_id, cert_number = cert['user_id'], cert['certificate_number']
         
         # Update certificate - keep status as pending but record rejection reason in notes
         c.execute("""
