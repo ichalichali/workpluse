@@ -4800,7 +4800,7 @@ function viewCertDetails(cert) {
         </div>
     `;
     
-    showModal('Certificate Details', html);
+    showModal('Certificate Details', html, () => true);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
